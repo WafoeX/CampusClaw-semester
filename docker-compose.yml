@@ -1,0 +1,119 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-campusclaw}
+      POSTGRES_USER: ${POSTGRES_USER:-campusclaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: campusclaw-api:local
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - data
+
+  seed:
+    image: campusclaw-api:local
+    command: ["campusclaw", "seed-demo"]
+    environment:
+      APP_ENV: ${APP_ENV:-demo}
+      DATABASE_URL: ${DATABASE_URL:-}
+      SESSION_HMAC_KEY: ${SESSION_HMAC_KEY:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_LIFETIME_SECONDS: ${SESSION_LIFETIME_SECONDS:-28800}
+      UPLOAD_ROOT: /var/lib/campusclaw/materials
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-52428800}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      DEMO_ALPHA_TEACHER_PASSWORD: ${DEMO_ALPHA_TEACHER_PASSWORD:-}
+      DEMO_ALPHA_STUDENT_PASSWORD: ${DEMO_ALPHA_STUDENT_PASSWORD:-}
+      DEMO_BETA_TEACHER_PASSWORD: ${DEMO_BETA_TEACHER_PASSWORD:-}
+      DEMO_BETA_STUDENT_PASSWORD: ${DEMO_BETA_STUDENT_PASSWORD:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - materials-data:/var/lib/campusclaw/materials
+    networks:
+      - data
+
+  api:
+    image: campusclaw-api:local
+    build:
+      context: ./api
+    command:
+      - uvicorn
+      - campusclaw.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      APP_ENV: ${APP_ENV:-demo}
+      DATABASE_URL: ${DATABASE_URL:-}
+      SESSION_HMAC_KEY: ${SESSION_HMAC_KEY:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_LIFETIME_SECONDS: ${SESSION_LIFETIME_SECONDS:-28800}
+      UPLOAD_ROOT: /var/lib/campusclaw/materials
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-52428800}
+      SEED_DEMO_DATA: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    volumes:
+      - materials-data:/var/lib/campusclaw/materials
+    networks:
+      - gateway
+      - data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen(
+              "http://127.0.0.1:8000/health", timeout=2
+          )
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 5s
+
+  web:
+    image: campusclaw-web:local
+    build:
+      context: ./frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    networks:
+      - gateway
+
+volumes:
+  postgres-data:
+  materials-data:
+
+networks:
+  gateway:
+  data:
+    internal: true

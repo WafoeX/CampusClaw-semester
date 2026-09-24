@@ -1,0 +1,2 @@
+Welcome to Beta Class.
+This separate sample demonstrates cross-class isolation.

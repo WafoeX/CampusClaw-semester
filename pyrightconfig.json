@@ -1,0 +1,14 @@
+{
+  "venvPath": "api",
+  "venv": ".venv",
+  "include": ["api/src", "api/tests"],
+  "extraPaths": ["api/src"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict",
+  "executionEnvironments": [
+    {
+      "root": "api",
+      "extraPaths": ["api/src"]
+    }
+  ]
+}

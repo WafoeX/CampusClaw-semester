@@ -1,0 +1,29 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+.venv
+api/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+
+# Runtime data
+materials/
+backup/
+artifacts/
+*.log
+.DS_Store
