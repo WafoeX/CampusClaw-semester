@@ -54,41 +54,43 @@ The initial schema will contain:
 
 - `classes(id UUID, name UNIQUE, created_at)`.
 - `users(id UUID, account UNIQUE, password_hash, role, class_id NOT NULL, is_active, created_at, updated_at)` with role constrained to `teacher` or `student` and a foreign key to `classes`.
-- `sessions(id UUID, token_digest UNIQUE, user_id, csrf_digest, expires_at, created_at, last_seen_at)` with cascading removal when a user is removed and indexes for lookup and expiry cleanup.
 - `materials(id UUID, class_id, uploader_id, title, original_filename, content_type, byte_size, sha256, storage_key UNIQUE, state, created_at)` with foreign keys and indexes on `(class_id, created_at, id)`; `state` is constrained to `pending` or `ready`.
 
 UUID identifiers avoid guessable sequential resource IDs but do not replace authorization. Database constraints prevent missing class membership and unsupported roles. Material queries still include `class_id` in their predicates; loading by material ID and checking later is not the normal access path.
 
 Accounts will be provisioned with a containerized CLI that creates the class if requested, prompts for the password without placing it in command history, hashes it, and inserts the user. Self-registration is intentionally absent.
 
-### D4. Use opaque, server-side sessions with Argon2id password hashes
+### D4. Use JWT Bearer access tokens with Argon2id password hashes
 
 Passwords will be hashed with Argon2id using parameters calibrated for the deployment and encoded with a per-password salt. The API will verify hashes through `argon2-cffi`, support rehash-on-login when parameters change, and exclude credential fields from request logging and validation errors.
 
-Successful login will generate a 256-bit random session token. Only an HMAC digest of that token will be stored in PostgreSQL; the HMAC key is a required server-side environment secret. The raw token is sent in an HttpOnly, SameSite=Lax cookie with a bounded lifetime and `Secure` enabled for HTTPS deployments. Logout deletes the session and expires the cookie. Expired sessions are rejected and periodically removed.
+Successful login will issue a short-lived HS256 JWT access token signed by the required server-only `JWT_SIGNING_KEY`. The token contains only standard validation claims (`sub`, `iat`, `exp`, `iss`, and `aud`); it does not contain password data, roles, or class identifiers. The login response returns `access_token`, `token_type: "bearer"`, the expiration, and safe identity metadata. The browser persists the access token in `localStorage` and sends it only as `Authorization: Bearer <access_token>` on authenticated API requests. No authentication cookie, cookie fallback, or CSRF token is used.
 
-State-changing requests will require a session-bound CSRF token sent in a custom header. The React client obtains it with the authenticated identity response and does not persist it outside memory. Same-origin routing and an Origin check provide additional defense. Login errors remain generic.
+Every authenticated request validates signature, issuer, audience, algorithm, required claims, and expiration, then re-reads the user, role, active state, and class from PostgreSQL. This ensures user deactivation, role changes, and class changes take effect immediately without trusting authorization state embedded in a token. Logout is client-side: it removes the token from localStorage and does not claim server-side revocation. The selected localStorage persistence accepts the residual XSS token-theft risk; the React application must never render untrusted HTML and the gateway CSP remains restrictive. Login errors remain generic.
+
+The migration removes the legacy `sessions` table. Deployed clients using a legacy cookie receive 401 after upgrade and must log in again with the Bearer-token flow. JWT signing-key rotation invalidates all outstanding access tokens.
 
 Alternatives considered:
 
-- JWTs put authorization state in the browser and complicate immediate revocation; opaque sessions better match the requirements.
-- Signed client-side session cookies reduce database reads but make logout and role/class changes harder to enforce immediately.
+- Opaque server-side bearer tokens support immediate server-side revocation, but the user selected signed JWT access tokens.
+- JWT plus a refresh-token session would provide persistent renewal and revocation but adds a token store and refresh endpoint that are not in scope.
+- Signed client-side session cookies are not an explicit Authorization-header token mode.
 - bcrypt is acceptable, but Argon2id provides the selected memory-hard password hashing baseline.
 
 ### D5. Centralize authentication, role authorization, and class-scoped queries
 
-FastAPI dependencies will resolve the session to a current principal containing immutable request-time `user_id`, `role`, and `class_id`. Separate dependencies will require a supported role and teacher role. Material repository methods will require `class_id` as an argument and include it in list/detail/download queries.
+FastAPI dependencies will require exactly one `Authorization: Bearer <JWT>` credential, validate the JWT, and resolve a current principal from current database user data containing `user_id`, `role`, and `class_id`. They reject missing, malformed, expired, invalidly signed, wrong-issuer/audience, inactive, missing-class, and unsupported-role credentials with the same 401 response. Separate dependencies will require a supported role and teacher role. Material repository methods will require `class_id` as an argument and include it in list/detail/download queries.
 
 The upload API will ignore or reject client class selectors and assign `principal.class_id`. Detail and download lookups use both material ID and class ID; both a missing ID and a cross-class ID return the same 404 payload. Student upload is rejected before multipart content is persisted. The React UI hides teacher-only controls for usability, but API checks remain authoritative.
 
 A narrow endpoint surface will be used:
 
-- `POST /api/auth/login`, `POST /api/auth/logout`, and `GET /api/auth/me`.
+- `POST /api/auth/login`, `POST /api/auth/logout`, and `GET /api/auth/me`; login returns an access token, authenticated endpoints use the Bearer header, and logout has no server-side token state.
 - `GET /api/materials`, `POST /api/materials`, `GET /api/materials/{id}`, and `GET /api/materials/{id}/download`.
 - `GET /health` outside `/api` for readiness.
 - Browser routes `/login`, `/materials`, and `/materials/upload`.
 
-React route guards call `/api/auth/me`; unauthenticated protected routes navigate to `/login` with a validated same-origin return path. This is navigation behavior only—the API remains the security boundary.
+React persists the login access token in `localStorage`, attaches it to every protected API request (including fetch-based downloads), and clears it when `/api/auth/me` returns 401 or logout completes. Route guards call `/api/auth/me`; unauthenticated protected routes navigate to `/login` with a validated same-origin return path. This is navigation behavior only—the API remains the security boundary.
 
 ### D6. Stream uploads into a recoverable two-phase file workflow
 
@@ -143,9 +145,9 @@ Frontend tests will cover route guards, role-based controls, errors, and upload 
 - **[A crash can leave pending metadata or orphaned files]** → Use `pending`/`ready` visibility, same-filesystem atomic rename, cleanup on failure, and startup reconciliation.
 - **[Uploaded content can be malicious even when access-controlled]** → Force attachment download, apply `nosniff`, never execute or render uploads inline, and document malware scanning as a future hardening option.
 - **[Argon2 settings can exhaust small containers]** → Benchmark and document memory/time parameters, cap concurrent login work, and retain rehash-on-login support.
-- **[Cookie security differs between local HTTP and production HTTPS]** → Default production documentation to HTTPS with `Secure` cookies and require an explicit local-development override.
+- **[Persistent browser tokens are exposed to XSS]** → The user selected localStorage; do not render untrusted HTML, retain a restrictive CSP, attach tokens only to same-origin API calls, use bounded lifetimes, and document the residual risk.
 - **[Nginx and API upload limits can diverge]** → Define both values in deployment documentation, keep the gateway ceiling above the API limit, and test both rejection paths.
-- **[Server-side sessions add database traffic and cleanup work]** → Index token digests and expiry, use bounded session lifetimes, and add scheduled expiry cleanup.
+- **[Stateless JWTs cannot be individually revoked]** → Use bounded lifetimes, re-read active user/role/class state on every request, and document signing-key rotation as global invalidation.
 - **[Demo credentials or sample data could leak into production]** → Disable seeding by default in production, require explicit environment passwords only in the seed service, reject missing/placeholder production values, and test that the production profile creates no sample records or files.
 
 ## Migration Plan

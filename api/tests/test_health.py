@@ -17,8 +17,7 @@ def settings_for(tmp_path: Path, database_url: str) -> Settings:
     return Settings(
         APP_ENV=AppEnvironment.TEST,
         DATABASE_URL=database_url,
-        SESSION_HMAC_KEY=SecretStr("h" * 32),
-        SESSION_COOKIE_SECURE=False,
+        JWT_SIGNING_KEY=SecretStr("h" * 32),
         UPLOAD_ROOT=tmp_path / "materials",
     )
 
@@ -32,7 +31,7 @@ def add_head(engine: Engine) -> None:
     )
     metadata.create_all(engine)
     with engine.begin() as connection:
-        connection.execute(insert(versions).values(version_num="20260923_0001"))
+        connection.execute(insert(versions).values(version_num="20260929_0002"))
 
 
 def test_health_reports_ready_only_after_database_head_and_storage_are_ready(
@@ -77,5 +76,5 @@ def test_health_is_unavailable_when_storage_is_not_a_directory(tmp_path: Path) -
         response = client.get("/health")
 
     assert response.status_code == 503
-    assert "SESSION_HMAC_KEY" not in response.text
+    assert "JWT_SIGNING_KEY" not in response.text
     database.dispose()

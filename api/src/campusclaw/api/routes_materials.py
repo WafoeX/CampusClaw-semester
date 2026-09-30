@@ -15,7 +15,6 @@ from campusclaw.api.dependencies import (
     get_database,
     get_db,
     get_settings,
-    require_csrf,
     require_supported_role,
     require_teacher,
 )
@@ -60,7 +59,6 @@ def list_materials(
 async def upload_material(
     request: Request,
     principal: Annotated[Principal, Depends(require_teacher)],
-    _csrf: Annotated[Principal, Depends(require_csrf)],
     database: Annotated[Database, Depends(get_database)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> MaterialResponse:

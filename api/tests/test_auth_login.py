@@ -1,4 +1,3 @@
-# pyright: basic, reportMissingImports=false
 import logging
 import uuid
 from collections.abc import Iterator
@@ -10,15 +9,14 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 
 from campusclaw.config import AppEnvironment, Settings
-from campusclaw.domain.models import Base, Class, Session, User
+from campusclaw.domain.models import Base, Class, User
 from campusclaw.domain.security import PasswordService
 from campusclaw.main import create_app
 from campusclaw.persistence.database import Database
 
-LoginContext = tuple[TestClient, Database, Settings]
+LoginContext = tuple[TestClient, Database]
 
 
-# The fixture injects fast deterministic services while exercising the real router.
 @pytest.fixture
 def login_context(tmp_path: Path) -> Iterator[LoginContext]:
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'login.db'}")
@@ -46,12 +44,13 @@ def login_context(tmp_path: Path) -> Iterator[LoginContext]:
     settings = Settings(
         APP_ENV=AppEnvironment.TEST,
         DATABASE_URL=f"sqlite+pysqlite:///{tmp_path / 'login.db'}",
-        SESSION_HMAC_KEY=SecretStr("l" * 32),
-        SESSION_COOKIE_SECURE=True,
+        JWT_SIGNING_KEY=SecretStr("l" * 32),
         UPLOAD_ROOT=tmp_path / "uploads",
     )
-    app = create_app(settings=settings, database=database, password_service=hasher)
-    yield TestClient(app), database, settings
+    yield (
+        TestClient(create_app(settings=settings, database=database, password_service=hasher)),
+        database,
+    )
     database.dispose()
 
 
@@ -63,32 +62,26 @@ def login_context(tmp_path: Path) -> Iterator[LoginContext]:
     ],
 )
 def test_teacher_and_student_login_success(
-    login_context: LoginContext,
-    account: str,
-    password: str,
-    role: str,
+    login_context: LoginContext, account: str, password: str, role: str
 ) -> None:
-    client, database, settings = login_context
+    client, database = login_context
     with client:
         response = client.post("/api/auth/login", json={"account": account, "password": password})
     assert response.status_code == 200
     body = response.json()
     assert body["account"] == account
     assert body["role"] == role
-    assert "password" not in body
-    cookie = response.headers["set-cookie"]
-    assert f"{settings.SESSION_COOKIE_NAME}=" in cookie
-    assert "HttpOnly" in cookie
-    assert "Secure" in cookie
-    assert "SameSite=lax" in cookie
+    assert body["token_type"] == "bearer"
+    assert body["access_token"].count(".") == 2
+    assert "set-cookie" not in response.headers
     with database.transaction() as session:
-        assert session.scalar(select(func.count()).select_from(Session)) == 1
+        assert session.scalar(select(func.count()).select_from(User)) == 2
 
 
 def test_unknown_and_wrong_password_have_identical_failure(
     login_context: LoginContext, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client, database, _ = login_context
+    client, _ = login_context
     caplog.set_level(logging.DEBUG)
     with client:
         unknown = client.post(
@@ -104,5 +97,3 @@ def test_unknown_and_wrong_password_have_identical_failure(
         == {"detail": {"code": "invalid_credentials", "message": "Invalid account or password"}}
     )
     assert "do-not-log-me" not in caplog.text
-    with database.transaction() as session:
-        assert session.scalar(select(func.count()).select_from(Session)) == 0

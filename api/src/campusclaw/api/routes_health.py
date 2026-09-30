@@ -14,7 +14,7 @@ from campusclaw.api.dependencies import get_database, get_settings
 from campusclaw.config import Settings
 from campusclaw.persistence.database import Database
 
-EXPECTED_ALEMBIC_HEAD = "20260923_0001"
+EXPECTED_ALEMBIC_HEAD = "20260929_0002"
 _ALEMBIC_VERSION = MetaData()
 _ALEMBIC_VERSION_TABLE = Table(
     "alembic_version",

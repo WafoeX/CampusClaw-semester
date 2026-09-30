@@ -50,7 +50,7 @@ test("teacher uploads, sees, downloads, and logs out through the gateway", async
   await expect(page.getByText(title)).toBeVisible();
   const uploadedCard = page.locator(".material-card").filter({ hasText: title });
   const downloadPromise = page.waitForEvent("download");
-  await uploadedCard.getByRole("link", { name: /下载文件/ }).click();
+  await uploadedCard.getByRole("button", { name: /下载文件/ }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("gateway-lesson.txt");
 

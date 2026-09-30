@@ -8,50 +8,50 @@ README = (ROOT / "README.md").read_text()
 
 def test_operations_guide_covers_startup_and_runtime_boundaries() -> None:
     required_sections = (
-        "## Runtime topology",
-        "## Prepare server configuration",
-        "## Demo startup",
-        "## Production startup",
-        "## Migrations and health",
-        "## Provision real accounts",
-        "## HTTPS, cookies, and secrets",
-        "## Volume lifecycle",
+        "## 运行时拓扑",
+        "## 准备服务器配置",
+        "## 演示环境启动",
+        "## 生产环境启动",
+        "## 数据库迁移与健康检查",
+        "## 创建真实账户",
+        "## HTTPS、JWT 与密钥",
+        "## 数据卷生命周期",
     )
     assert all(section in OPERATIONS for section in required_sections)
     assert "docs/operations.md" in README
-    assert "only service with a host `ports` mapping" in OPERATIONS
-    assert "SESSION_COOKIE_SECURE=true" in OPERATIONS
+    assert "唯一配置了主机 `ports` 端口映射的服务" in OPERATIONS
+    assert "JWT_SIGNING_KEY" in OPERATIONS
 
 
 def test_operations_guide_covers_coordinated_backup_restore() -> None:
     required_terms = (
-        "## Coordinated backup and restore",
-        "maintenance window",
+        "## 协调一致的备份与恢复",
+        "维护窗口",
         "pg_dump",
         "pg_restore",
         "materials.tar.gz",
         "SHA256SUMS",
         "check_backup_restore.py",
-        "storage_key`/SHA-256",
+        "storage_key` 和 SHA-256",
     )
     assert all(term in OPERATIONS for term in required_terms)
 
 
 def test_operations_guide_matches_semester_non_goals() -> None:
     required_limits = (
-        "one API writer",
-        "local named-volume file storage",
-        "content parsing",
-        "malware scanning",
-        "content execution",
-        "inline rendering",
-        "material search",
-        "question answering",
-        "intelligent conversation",
-        "assignment submission",
-        "registration",
-        "password recovery",
-        "skill/feature toggles",
-        "single-class membership",
+        "一个 API 写入实例",
+        "本地具名数据卷",
+        "内容解析",
+        "恶意软件扫描",
+        "内容执行",
+        "内联渲染",
+        "教学资料搜索",
+        "问答",
+        "智能对话",
+        "作业提交",
+        "用户注册",
+        "密码找回",
+        "技能/功能开关",
+        "每个账户只能属于一个班级",
     )
     assert all(limit in OPERATIONS for limit in required_limits)

@@ -3,9 +3,7 @@ services:
     environment:
       APP_ENV: production
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
-      SESSION_COOKIE_SECURE: "true"
   seed:
     environment:
       APP_ENV: production
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
-      SESSION_COOKIE_SECURE: "true"

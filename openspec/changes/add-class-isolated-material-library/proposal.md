@@ -4,7 +4,7 @@ The project needs a secure, containerized foundation for class-scoped teaching-m
 
 ## What Changes
 
-- Add account/password login for teachers and students, with server-managed sessions and login redirection for unauthenticated page access.
+- Add account/password login for teachers and students using signed JWT Bearer access tokens, localStorage persistence in the browser, and login redirection for unauthenticated page access.
 - Store passwords only as adaptive password hashes and load application secrets only from server-side environment variables.
 - Add server-side role authorization so only teachers can upload materials and student upload attempts are rejected.
 - Make each user belong to exactly one class and enforce that class as the data boundary for every material read, list, and upload operation.
@@ -28,7 +28,7 @@ None. The project has no existing capability specifications.
 
 ## Impact
 
-- Introduces the initial application, API, web UI, persistence schema, file-storage layout, authentication/session layer, and authorization middleware.
+- Introduces the initial application, API, web UI, persistence schema, file-storage layout, JWT authentication layer, and authorization middleware.
 - Adds password-hashing, database, upload-processing, and test dependencies.
 - Adds container images, Docker Compose configuration, an internal-only API/database network boundary, an idempotent demo-seed lifecycle, persistent volumes, environment configuration, and operational documentation.
 - Establishes externally visible login, logout, health, and material APIs plus protected browser pages.

@@ -81,8 +81,7 @@ def main() -> None:
                 "postgresql+psycopg://campusclaw:"
                 f"{quote(postgres_password, safe='')}@db/campusclaw"
             ),
-            "SESSION_HMAC_KEY": secrets.token_hex(32),
-            "SESSION_COOKIE_SECURE": "true",
+            "JWT_SIGNING_KEY": secrets.token_hex(32),
             "SEED_DEMO_DATA": "false",
             "DEMO_ALPHA_TEACHER_PASSWORD": secrets.token_hex(16),
             "DEMO_ALPHA_STUDENT_PASSWORD": secrets.token_hex(16),

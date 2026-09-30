@@ -181,8 +181,7 @@ def main() -> None:
             "POSTGRES_USER": "campusclaw",
             "POSTGRES_PASSWORD": password,
             "DATABASE_URL": f"postgresql+psycopg://campusclaw:{password}@db/campusclaw",
-            "SESSION_HMAC_KEY": secrets.token_hex(32),
-            "SESSION_COOKIE_SECURE": "false",
+            "JWT_SIGNING_KEY": secrets.token_hex(32),
             "SEED_DEMO_DATA": "true",
             "DEMO_ALPHA_TEACHER_PASSWORD": secrets.token_hex(16),
             "DEMO_ALPHA_STUDENT_PASSWORD": secrets.token_hex(16),
@@ -229,7 +228,7 @@ def main() -> None:
                 "-d",
                 environment["POSTGRES_DB"],
                 "-c",
-                "TRUNCATE materials, sessions, users, classes CASCADE",
+                "TRUNCATE materials, users, classes CASCADE",
             )
             clear_material_volume(project, environment)
 

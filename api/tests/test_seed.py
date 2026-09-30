@@ -16,8 +16,7 @@ def seed_settings(upload_root: Path, suffix: str = "one") -> Settings:
     return Settings(
         APP_ENV=AppEnvironment.TEST,
         DATABASE_URL="sqlite+pysqlite:///:memory:",
-        SESSION_HMAC_KEY=SecretStr("s" * 32),
-        SESSION_COOKIE_SECURE=False,
+        JWT_SIGNING_KEY=SecretStr("s" * 32),
         UPLOAD_ROOT=upload_root,
         SEED_DEMO_DATA=True,
         DEMO_ALPHA_TEACHER_PASSWORD=SecretStr(f"alpha-teacher-{suffix}"),

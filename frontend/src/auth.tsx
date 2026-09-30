@@ -11,12 +11,18 @@ import {
 } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
+const ACCESS_TOKEN_STORAGE_KEY = "campusclaw.access-token";
+
 export type Identity = {
   user_id: string;
   account: string;
   role: "teacher" | "student";
   class_id: string;
-  csrf_token: string;
+};
+
+type LoginResponse = Identity & {
+  access_token: string;
+  token_type: "bearer";
   expires_at: string;
 };
 
@@ -26,6 +32,8 @@ type AuthContextValue = {
   error: string | null;
   login: (account: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  authorizationHeader: () => HeadersInit | null;
+  handleUnauthenticated: () => void;
   clearError: () => void;
 };
 
@@ -39,6 +47,31 @@ function jsonError(body: unknown, fallback: string): string {
     }
   }
   return fallback;
+}
+
+function storedAccessToken(): string | null {
+  try {
+    return window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredAccessToken(): void {
+  try {
+    window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  } catch {
+    // Treat inaccessible storage as already cleared.
+  }
+}
+
+function storeAccessToken(token: string): boolean {
+  try {
+    window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function safeReturnTarget(value: string | null | undefined): string {
@@ -59,20 +92,37 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const clearAuthentication = useCallback(() => {
+    clearStoredAccessToken();
+    setIdentity(null);
+  }, []);
+
+  const authorizationHeader = useCallback((): HeadersInit | null => {
+    const token = storedAccessToken();
+    if (!token) return null;
+    return { Authorization: `Bearer ${token}` };
+  }, []);
+
   const refreshIdentity = useCallback(async () => {
+    const headers = authorizationHeader();
+    if (!headers) {
+      clearAuthentication();
+      setLoading(false);
+      return;
+    }
     try {
-      const response = await fetch("/api/auth/me", { credentials: "same-origin" });
+      const response = await fetch("/api/auth/me", { headers });
       if (!response.ok) {
-        setIdentity(null);
+        clearAuthentication();
         return;
       }
       setIdentity((await response.json()) as Identity);
     } catch {
-      setIdentity(null);
+      clearAuthentication();
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authorizationHeader, clearAuthentication]);
 
   useEffect(() => {
     void refreshIdentity();
@@ -83,7 +133,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
-        credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ account, password }),
       });
@@ -92,7 +141,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setError(jsonError(body, "Login failed"));
         return false;
       }
-      setIdentity(body as Identity);
+      const loginResponse = body as LoginResponse;
+      if (!storeAccessToken(loginResponse.access_token)) {
+        setError("Unable to persist the access token");
+        return false;
+      }
+      setIdentity({
+        user_id: loginResponse.user_id,
+        account: loginResponse.account,
+        role: loginResponse.role,
+        class_id: loginResponse.class_id,
+      });
       return true;
     } catch {
       setError("Unable to reach the server");
@@ -101,25 +160,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, []);
 
   const logout = useCallback(async () => {
-    if (!identity) return;
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          Origin: window.location.origin,
-          "x-csrf-token": identity.csrf_token,
-        },
-      });
+      const headers = authorizationHeader();
+      await fetch("/api/auth/logout", { method: "POST", headers: headers ?? undefined });
     } finally {
-      setIdentity(null);
+      clearAuthentication();
       setError(null);
     }
-  }, [identity]);
+  }, [authorizationHeader, clearAuthentication]);
 
   const value = useMemo(
-    () => ({ identity, loading, error, login, logout, clearError: () => setError(null) }),
-    [identity, loading, error, login, logout],
+    () => ({
+      identity,
+      loading,
+      error,
+      login,
+      logout,
+      authorizationHeader,
+      handleUnauthenticated: clearAuthentication,
+      clearError: () => setError(null),
+    }),
+    [identity, loading, error, login, logout, authorizationHeader, clearAuthentication],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -175,7 +236,7 @@ export function LoginPage() {
             <h1>课程资料，清晰汇聚。</h1>
             <p>进入专属班级空间，安全查看与管理每一份教学资料。</p>
           </div>
-          <p className="security-note"><span aria-hidden="true">◆</span> 班级数据隔离 · 安全会话访问</p>
+          <p className="security-note"><span aria-hidden="true">◆</span> 班级数据隔离 · Token 验证访问</p>
         </section>
         <form className="auth-card" onSubmit={submit} aria-label="登录表单">
           <div className="auth-card-heading">

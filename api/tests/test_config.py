@@ -10,24 +10,23 @@ DATABASE_URL = "postgresql+psycopg://test:test@db/test"
 BASE: dict[str, object] = {
     "APP_ENV": "test",
     "DATABASE_URL": DATABASE_URL,
-    "SESSION_HMAC_KEY": "k" * 32,
-    "SESSION_COOKIE_SECURE": False,
+    "JWT_SIGNING_KEY": "k" * 32,
     "UPLOAD_ROOT": Path("/tmp/campusclaw-test"),
 }
 
 
 def test_missing_secret_is_rejected_without_value_leak() -> None:
-    values = {key: value for key, value in BASE.items() if key != "SESSION_HMAC_KEY"}
+    values = {key: value for key, value in BASE.items() if key != "JWT_SIGNING_KEY"}
     with pytest.raises(ValidationError) as caught:
         Settings(**values)  # type: ignore[arg-type]
-    assert "SESSION_HMAC_KEY" in str(caught.value)
+    assert "JWT_SIGNING_KEY" in str(caught.value)
     assert DATABASE_URL not in str(caught.value)
 
 
 def test_empty_secret_is_rejected_without_echo() -> None:
     with pytest.raises(ValidationError) as caught:
-        Settings(**(BASE | {"SESSION_HMAC_KEY": ""}))  # type: ignore[arg-type]
-    assert "SESSION_HMAC_KEY" in str(caught.value)
+        Settings(**(BASE | {"JWT_SIGNING_KEY": ""}))  # type: ignore[arg-type]
+    assert "JWT_SIGNING_KEY" in str(caught.value)
     assert "input_value" not in str(caught.value)
 
 

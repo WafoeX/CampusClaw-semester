@@ -3,13 +3,13 @@
 - [x] 1.1 Scaffold the Python 3.12 FastAPI project with application, domain, persistence, API, CLI, migration, and test packages; lock dependencies and verify a clean environment can install them and import the application.
 - [x] 1.2 Configure backend formatting, linting, type checking, and pytest with coverage; verify the empty baseline passes the documented quality command.
 - [x] 1.3 Scaffold the React + TypeScript + Vite project with routing, test utilities, linting, and production build scripts; verify lint, unit-test, type-check, and build commands pass.
-- [x] 1.4 Add validated backend settings for application environment, database URL, session HMAC key, cookie options, session lifetime, upload root, upload-size limit, demo-seed mode, and seed-only sample passwords; verify startup/seed tests reject missing or empty required values without printing them.
+- [x] 1.4 Replace session/cookie settings with validated server-only JWT signing key and bounded access-token lifetime settings; verify startup rejects missing or empty signing values without printing them.
 - [x] 1.5 Add `.env.example`, ignore rules, and developer documentation that distinguish public build configuration, server-only secrets, and demo-only seed credentials; verify no usable secret or sample password is committed or emitted into a production web bundle.
 
 ## 2. PostgreSQL Schema and Provisioning
 
-- [x] 2.1 Define SQLAlchemy models for classes, users, sessions, and materials with the UUID keys, foreign keys, uniqueness, role/state checks, non-null class membership, expiry fields, and class-list indexes from D3; verify model metadata tests assert every required constraint and index.
-- [x] 2.2 Create the initial Alembic migration and downgrade policy for the complete schema; verify upgrade from an empty PostgreSQL database reaches head and schema inspection matches the models.
+- [x] 2.1 Remove the SQLAlchemy session model and its schema metadata while retaining classes, users, and materials with the UUID keys, foreign keys, uniqueness, role/state checks, non-null class membership, and class-list indexes from D3; verify model metadata tests assert that no sessions table is declared.
+- [x] 2.2 Create an Alembic migration from the deployed session schema that drops the legacy sessions table and its indexes, with a documented destructive downgrade; verify upgrade reaches head and schema inspection matches the JWT-only models.
 - [x] 2.3 Implement database session and transaction helpers with explicit commit/rollback ownership; verify integration tests leave no partial rows after forced exceptions.
 - [x] 2.4 Implement the containerized class/user provisioning CLI with hidden password prompt, Argon2id hashing, validated role, and idempotent class selection/creation; verify CLI integration tests create teacher and student users without plaintext credentials in arguments, output, or storage.
 - [x] 2.5 Implement an environment-aware `seed-demo` command with stable seed identities for two classes, one teacher and one student per class, and at least one ready material per class; verify required passwords come only from environment variables, repeated runs create no duplicates or password resets, conflicting ownership fails visibly, and fault injection leaves no partial rows or files.
@@ -17,11 +17,11 @@
 ## 3. Authentication and Session Security
 
 - [x] 3.1 Implement Argon2id password hashing, verification, parameter calibration, and rehash-on-login support; verify unit tests cover valid, invalid, uniquely salted, and rehash-required cases.
-- [x] 3.2 Implement 256-bit opaque session tokens, HMAC token digests, session-bound CSRF tokens, bounded expiry, revocation, and expired-session cleanup; verify unit and PostgreSQL tests cover lookup, expiry, revocation, and digest-only persistence.
-- [x] 3.3 Implement the current-principal dependency that resolves active user ID, role, and class from the session cookie and rejects unknown, expired, inactive, or unsupported accounts; verify protected API tests return 401 without an HTML redirect.
-- [x] 3.4 Implement `POST /api/auth/login` with generic invalid-credential errors, secure cookie attributes, and credential-safe logging; verify teacher/student success and indistinguishable unknown-account/wrong-password 401 tests.
-- [x] 3.5 Implement `GET /api/auth/me` and `POST /api/auth/logout` with CSRF and Origin enforcement for state changes; verify identity data contains no credential fields and logout revokes reuse of the cookie.
-- [x] 3.6 Build the React authentication provider, login page, in-memory CSRF handling, protected-route guard, safe same-origin return target, and logout action; verify component tests cover successful login, failed login, redirect to `/login`, return navigation, and logout.
+- [x] 3.2 Implement bounded HS256 JWT access-token issue and validation with issuer, audience, `sub`, `iat`, and `exp` claims; verify unit tests reject expired, malformed, missing-claim, wrong-key, wrong-algorithm, wrong-issuer, and wrong-audience tokens.
+- [x] 3.3 Implement the current-principal dependency that reads only an Authorization Bearer token, validates it, then resolves current active user ID, role, and class from the database; verify protected API tests reject cookie-only, missing, malformed, expired, inactive, and unsupported credentials with JSON 401 responses.
+- [x] 3.4 Implement `POST /api/auth/login` with generic invalid-credential errors, a safe JWT access-token response, and credential/token-safe logging; verify teacher/student success and indistinguishable unknown-account/wrong-password 401 tests.
+- [x] 3.5 Implement Bearer-authenticated `GET /api/auth/me` and idempotent `POST /api/auth/logout` without cookies or CSRF state; verify identity data contains no credential/token fields, logout returns 204, and a formerly used token remains valid until expiry as specified.
+- [x] 3.6 Build the React authentication provider, login page, localStorage access-token handling, Bearer-header API/download client, protected-route guard, safe same-origin return target, and logout action; verify component tests cover reload restoration, successful and failed login, redirect, authenticated request headers, 401 token cleanup, download, and logout.
 
 ## 4. Authorization and Class Isolation
 
@@ -52,15 +52,15 @@
 
 ## 7. End-to-End Security and Behavior Verification
 
-- [x] 7.1 Add PostgreSQL-backed API integration fixtures aligned with the stable demo manifest for two classes, teacher/student accounts, isolated session cookies, and temporary material storage; verify tests cleanly repeat without sharing state or plaintext passwords.
+- [x] 7.1 Update PostgreSQL-backed API integration fixtures for the stable demo manifest, teacher/student JWT Bearer tokens, and temporary material storage; verify tests cleanly repeat without persisting plaintext passwords or tokens.
 - [x] 7.2 Add Playwright scenarios using environment-supplied sample credentials for unauthenticated protected-page redirect, preloaded class-specific materials, teacher login/upload/list/download/logout, student login/read/no-upload control, and invalid credentials; verify the suite passes only through the published web gateway.
-- [x] 7.3 Add adversarial Playwright/API scenarios for direct student upload, forged class fields, known cross-class IDs, filename traversal, oversize upload, expired sessions, missing files, and CSRF failure; verify expected 400/401/403/404/413 outcomes and absence of leaked data or partial storage.
+- [x] 7.3 Update adversarial Playwright/API scenarios for direct student upload, forged class fields, known cross-class IDs, filename traversal, oversize upload, missing files, and missing/malformed/expired/tampered Bearer tokens; verify expected 400/401/403/404/413 outcomes and absence of leaked data or partial storage.
 - [x] 7.4 Add an acceptance assertion that inspects the running Compose stack and fails if any host port other than the documented web port is published; verify it detects deliberately added API or database mappings.
 - [x] 7.5 Start the production Compose configuration from empty volumes without explicitly enabling seeding and verify no sample class, account, material row, or sample file exists; then explicitly enable seeding with required environment passwords and verify the documented override works.
 - [x] 7.6 Run backend formatting/lint/type/unit/integration coverage, frontend lint/type/unit/build, Docker image builds, demo and production Compose acceptance, Playwright, and non-interactive `openspec validate --changes --strict`; record a passing verification summary with exact commands and results.
 
 ## 8. Operations Documentation
 
-- [x] 8.1 Document demo and production startup, secure environment generation, sample-account password setup, seed idempotency and production-disable behavior, HTTPS/Secure-cookie expectations, migrations, health checks, real-account provisioning, volume lifecycle, and the internal-only API/database topology; verify a fresh operator can start and inspect both configurations using only the documentation.
+- [x] 8.1 Update documentation for demo and production startup, secure JWT signing-key generation, bounded token lifetimes, localStorage/XSS risk, migration logout effect, seed behavior, health checks, real-account provisioning, volume lifecycle, and the internal-only API/database topology; verify a fresh operator can start and inspect both configurations using only the documentation.
 - [x] 8.2 Document coordinated PostgreSQL and material-volume backup/restore with an upload-quiescing maintenance window and rollback precautions; verify a test backup restores accounts, metadata, and matching file SHA-256 values.
 - [x] 8.3 Document current limits and semester non-goals, including single API writer, local volume storage, no content execution/inline rendering, material search/question answering, intelligent conversation, assignment submission, registration/password recovery, and skill toggles; verify the documentation agrees with README, AGENTS, the proposal, specs, and design.

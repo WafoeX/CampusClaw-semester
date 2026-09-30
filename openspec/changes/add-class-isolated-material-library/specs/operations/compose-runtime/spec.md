@@ -12,7 +12,7 @@ The system SHALL provide a Docker Compose configuration that starts the web clie
 - **THEN** the database becomes ready, the API becomes healthy, and the web application is reachable through its documented port
 
 #### Scenario: Required configuration is absent
-- **WHEN** a required database, session, or storage configuration value is missing
+- **WHEN** a required database, JWT signing, or storage configuration value is missing
 - **THEN** the affected service refuses to become ready and reports a configuration error without printing secret values
 
 ### Requirement: API and database ports remain internal
@@ -69,7 +69,7 @@ The Compose runtime SHALL store PostgreSQL data and uploaded material files in p
 
 #### Scenario: Services are recreated
 - **WHEN** the operator recreates containers without deleting persistent volumes
-- **THEN** existing accounts, sessions subject to their expiry, material metadata, and uploaded files remain available
+- **THEN** existing accounts, material metadata, and uploaded files remain available, and previously issued JWTs remain valid only while their configured signing key and expiration remain valid
 
 ### Requirement: Health endpoint reports readiness
 The API SHALL expose unauthenticated `GET /health` and SHALL return HTTP 200 only when the API process, database connection, required schema, and material-storage location are ready for normal requests.

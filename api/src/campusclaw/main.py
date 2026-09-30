@@ -11,7 +11,7 @@ from campusclaw.api.routes_auth import router as auth_router
 from campusclaw.api.routes_health import router as health_router
 from campusclaw.api.routes_materials import router as materials_router
 from campusclaw.application.materials import reconcile_storage
-from campusclaw.application.sessions import SessionService
+from campusclaw.application.tokens import TokenService
 from campusclaw.config import Settings, get_settings
 from campusclaw.domain.security import PasswordService
 from campusclaw.persistence.database import Database
@@ -34,9 +34,9 @@ def create_app(
         app.state.database = runtime_database
         app.state.password_service = runtime_passwords
         app.state.dummy_password_hash = runtime_passwords.hash("dummy-not-a-user-password")
-        app.state.session_service = SessionService(
-            runtime_settings.SESSION_HMAC_KEY.get_secret_value().encode("utf-8"),
-            runtime_settings.SESSION_LIFETIME_SECONDS,
+        app.state.token_service = TokenService(
+            runtime_settings.JWT_SIGNING_KEY.get_secret_value(),
+            runtime_settings.JWT_ACCESS_TOKEN_LIFETIME_SECONDS,
         )
         # Readiness reports unavailable dependencies without preventing the
         # process from serving the public health endpoint.

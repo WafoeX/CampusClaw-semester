@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, SecretStr, ValidationError, model_validator
+from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,10 +33,8 @@ class Settings(BaseSettings):
 
     APP_ENV: AppEnvironment
     DATABASE_URL: Annotated[str, Field(min_length=1)]
-    SESSION_HMAC_KEY: SecretKey
-    SESSION_COOKIE_NAME: Annotated[str, Field(min_length=1)] = "campusclaw_session"
-    SESSION_COOKIE_SECURE: bool = True
-    SESSION_LIFETIME_SECONDS: Annotated[int, Field(ge=300, le=604800)] = 28800
+    JWT_SIGNING_KEY: SecretKey
+    JWT_ACCESS_TOKEN_LIFETIME_SECONDS: Annotated[int, Field(ge=300, le=604800)] = 28800
     UPLOAD_ROOT: Path
     UPLOAD_MAX_BYTES: Annotated[int, Field(ge=1, le=1_073_741_824)] = 52_428_800
     SEED_DEMO_DATA: bool = False
@@ -44,12 +42,6 @@ class Settings(BaseSettings):
     DEMO_ALPHA_STUDENT_PASSWORD: SeedPassword | None = None
     DEMO_BETA_TEACHER_PASSWORD: SeedPassword | None = None
     DEMO_BETA_STUDENT_PASSWORD: SeedPassword | None = None
-
-    @model_validator(mode="after")
-    def validate_environment(self) -> "Settings":
-        if self.APP_ENV == AppEnvironment.PRODUCTION and not self.SESSION_COOKIE_SECURE:
-            raise ValueError("production requires secure session cookies")
-        return self
 
     def require_seed_passwords(self) -> dict[str, SecretStr]:
         """Return all seed passwords, failing before any seed side effect."""

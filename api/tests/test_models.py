@@ -12,7 +12,7 @@ def constraint_names(table_name: str, kind: type[Constraint]) -> set[str]:
 
 
 def test_complete_model_metadata() -> None:
-    assert set(Base.metadata.tables) == {"classes", "users", "sessions", "materials"}
+    assert set(Base.metadata.tables) == {"classes", "users", "materials"}
 
 
 def test_user_membership_role_and_uniqueness_constraints() -> None:
@@ -23,14 +23,8 @@ def test_user_membership_role_and_uniqueness_constraints() -> None:
     assert "uq_users_account" in constraint_names("users", UniqueConstraint)
 
 
-def test_session_lookup_and_expiry_indexes() -> None:
-    sessions = Base.metadata.tables["sessions"]
-    index_columns = {
-        str(index.name): tuple(column.name for column in index.columns)
-        for index in sessions.indexes
-    }
-    assert index_columns["ix_sessions_expires_at"] == ("expires_at",)
-    assert "uq_sessions_token_digest" in constraint_names("sessions", UniqueConstraint)
+def test_no_server_managed_session_table_is_declared() -> None:
+    assert "sessions" not in Base.metadata.tables
 
 
 def test_material_constraints_and_class_list_index() -> None:

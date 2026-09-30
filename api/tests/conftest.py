@@ -26,8 +26,7 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         APP_ENV=AppEnvironment.TEST,
         DATABASE_URL="postgresql+psycopg://test:test@db/test",
-        SESSION_HMAC_KEY=SecretStr("t" * 32),
-        SESSION_COOKIE_SECURE=False,
+        JWT_SIGNING_KEY=SecretStr("t" * 32),
         UPLOAD_ROOT=tmp_path / "materials",
     )
 
@@ -42,7 +41,7 @@ class PostgresApiFixture:
     passwords: dict[str, str]
 
     def client(self) -> TestClient:
-        """Create a client with its own cookie jar for session-isolation checks."""
+        """Create a client for independent Bearer-token authentication checks."""
         return TestClient(self.app)
 
 
@@ -78,8 +77,7 @@ def postgres_api_fixture(tmp_path: Path) -> Iterator[PostgresApiFixture]:
         settings = Settings(
             APP_ENV=AppEnvironment.TEST,
             DATABASE_URL=raw_url,
-            SESSION_HMAC_KEY=SecretStr(uuid.uuid4().hex * 2),
-            SESSION_COOKIE_SECURE=False,
+            JWT_SIGNING_KEY=SecretStr(uuid.uuid4().hex * 2),
             UPLOAD_ROOT=tmp_path / "materials",
             SEED_DEMO_DATA=True,
             DEMO_ALPHA_TEACHER_PASSWORD=SecretStr(passwords["alpha_teacher"]),

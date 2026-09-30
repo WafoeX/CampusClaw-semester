@@ -37,9 +37,6 @@ def workflow_fixture(tmp_path: Path) -> tuple[Database, Principal, Path]:
         account="teacher.workflow",
         role=UserRole.TEACHER,
         class_id=class_id,
-        session_id=uuid.uuid4(),
-        session_token="opaque",
-        session_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
     )
     return database, principal, tmp_path / "uploads"
 

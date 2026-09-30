@@ -51,18 +51,24 @@ function LibraryHeader({ identity, logout }: { identity: Identity; logout: () =>
 }
 
 export function MaterialsLibrary() {
-  const { identity, logout } = useAuth();
+  const { identity, logout, authorizationHeader, handleUnauthenticated } = useAuth();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadMaterials = useCallback(async () => {
+    const headers = authorizationHeader();
+    if (!headers) {
+      handleUnauthenticated();
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/materials", { credentials: "same-origin" });
+      const response = await fetch("/api/materials", { headers });
       const body: unknown = await response.json();
       if (!response.ok) {
+        if (response.status === 401) handleUnauthenticated();
         setError(errorMessage(body, "Unable to load materials"));
         return;
       }
@@ -72,11 +78,36 @@ export function MaterialsLibrary() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authorizationHeader, handleUnauthenticated]);
 
   useEffect(() => {
     void loadMaterials();
   }, [loadMaterials]);
+
+  async function downloadMaterial(material: Material) {
+    const headers = authorizationHeader();
+    if (!headers) {
+      handleUnauthenticated();
+      return;
+    }
+    try {
+      const response = await fetch(`/api/materials/${encodeURIComponent(material.id)}/download`, { headers });
+      if (!response.ok) {
+        if (response.status === 401) handleUnauthenticated();
+        const body: unknown = await response.json();
+        setError(errorMessage(body, "Unable to download material"));
+        return;
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = material.original_filename;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      setError("Unable to reach the server");
+    }
+  }
 
   if (!identity) return null;
   return (
@@ -107,9 +138,9 @@ export function MaterialsLibrary() {
                 <div><dt>Uploaded</dt><dd>{new Date(material.created_at).toLocaleString()}</dd></div>
                 <div><dt>Uploader</dt><dd>{material.uploader_id}</dd></div>
               </dl>
-              <a className="download-link" href={`/api/materials/${material.id}/download`} download={material.original_filename}>
+              <button className="download-link" type="button" onClick={() => void downloadMaterial(material)}>
                 下载文件 <span aria-hidden="true">↓</span>
-              </a>
+              </button>
             </article>
           ))}
         </div>
@@ -119,7 +150,7 @@ export function MaterialsLibrary() {
 }
 
 export function UploadPage() {
-  const { identity } = useAuth();
+  const { identity, authorizationHeader, handleUnauthenticated } = useAuth();
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -128,13 +159,17 @@ export function UploadPage() {
 
   if (!identity) return null;
   if (identity.role !== "teacher") return <Navigate to="/materials" replace />;
-  const teacherIdentity = identity;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     if (!title.trim() || !file) {
       setError("A title and one file are required.");
+      return;
+    }
+    const headers = authorizationHeader();
+    if (!headers) {
+      handleUnauthenticated();
       return;
     }
     setSubmitting(true);
@@ -144,12 +179,12 @@ export function UploadPage() {
     try {
       const response = await fetch("/api/materials", {
         method: "POST",
-        credentials: "same-origin",
-        headers: { Origin: window.location.origin, "x-csrf-token": teacherIdentity.csrf_token },
+        headers,
         body: form,
       });
       const body: unknown = await response.json();
       if (!response.ok) {
+        if (response.status === 401) handleUnauthenticated();
         setError(errorMessage(body, response.status === 413 ? "File is too large" : "Upload failed"));
         return;
       }

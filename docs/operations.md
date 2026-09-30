@@ -31,7 +31,7 @@ python tests/test_compose_ports.py
 ```sh
 cp .env.example .env
 
-openssl rand -hex 32                 # SESSION_HMAC_KEY
+openssl rand -hex 32                 # JWT_SIGNING_KEY
 
 openssl rand -hex 24                 # POSTGRES_PASSWORD
 ```
@@ -43,12 +43,12 @@ DATABASE_URL=postgresql+psycopg://campusclaw:<url-encoded-password>@db/campuscla
 
 POSTGRES_PASSWORD=<same-password>
 
-SESSION_HMAC_KEY=<at-least-32-random-bytes>
+JWT_SIGNING_KEY=<at-least-32-random-bytes>
 ```
 
 如果生成的密码中包含 URL 保留字符，则需要在 `DATABASE_URL` 中对密码进行 URL 编码；而 `POSTGRES_PASSWORD` 中仍应保留原始密码。
 
-`.env` 文件应仅保存在服务器端，绝不能提交到版本库中。不要将数据库 URL、会话密钥或演示账户密码写入 React 源代码或 `VITE_*` 环境变量中。
+`.env` 文件应仅保存在服务器端，绝不能提交到版本库中。不要将数据库 URL、JWT 签名密钥或演示账户密码写入 React 源代码或 `VITE_*` 环境变量中。
 
 ## 演示环境启动
 
@@ -95,7 +95,7 @@ docker compose --env-file .env ps
 
 ## 生产环境启动
 
-生产环境应使用生产配置覆盖文件。该配置会设置 `APP_ENV=production`、启用安全 Cookie，并默认禁用演示数据初始化：
+生产环境应使用生产配置覆盖文件。该配置会设置 `APP_ENV=production` 并默认禁用演示数据初始化：
 
 ```sh
 docker compose --env-file .env \
@@ -105,7 +105,7 @@ docker compose --env-file .env \
 
 使用该命令启动时，不会创建任何示例班级、示例账户、示例教学资料数据库记录或示例文件。
 
-在向用户公开生产环境 Web 端点之前，必须在其前方部署 HTTPS。原因是 `SESSION_COOKIE_SECURE=true` 会阻止浏览器通过普通 HTTP 连接发送 Cookie。
+在向用户公开生产环境 Web 端点之前，必须在其前方部署 HTTPS，以保护登录凭据和 Authorization Bearer Token 不在传输过程中泄露。
 
 运维人员可以在受控演示场景下主动启用种子数据覆盖配置，但仍然必须提供全部四个账户密码：
 
@@ -175,14 +175,15 @@ docker compose --env-file .env \
 
 账户创建完成后，仅在确有必要时才需要重启服务；API 会直接从 PostgreSQL 中读取新账户。
 
-现有会话仍由服务器管理，并会按照既定规则过期，或者可以通过注销操作撤销。
+已签发的 JWT 会在配置的生命周期结束时过期；用户状态、角色和班级仍会在每次受保护请求中由服务器重新读取。注销只清除浏览器中的本地 Token，不能逐一撤销已签发的 JWT。
 
-## HTTPS、Cookie 与密钥
+## HTTPS、JWT 与密钥
 
 * 生产环境必须在外部反向代理或网关处终止 TLS，并将 HTTPS 流量转发至已经发布的 Web 网关。
-* 生产环境中必须保持 `SESSION_COOKIE_SECURE=true`。该 Cookie 同时设置为 `HttpOnly` 和 `SameSite=Lax`。
-* `SESSION_HMAC_KEY` 必须具有不可预测性，并且长度至少为 32 字节。仅应在计划使现有会话全部失效的情况下轮换该密钥，因为密钥变更后，现有会话摘要将无法继续被解析。
-* PostgreSQL 凭据、示例账户密码以及部署环境配置文件均属于仅限服务器端使用的敏感信息。
+* 登录成功后，浏览器将 JWT Access Token 保存至 `localStorage`，并只通过同源 API 的 `Authorization: Bearer` 请求头发送；Token 不会写入 URL，也不使用认证 Cookie。
+* `JWT_SIGNING_KEY` 必须具有不可预测性，并且长度至少为 32 字节。`JWT_ACCESS_TOKEN_LIFETIME_SECONDS` 必须保持有界（默认 8 小时）；轮换签名密钥会使全部已签发 Token 失效。
+* localStorage 会受到 XSS 窃取风险影响。不得渲染不受信任 HTML，必须保持网关 CSP，并在怀疑泄露时轮换签名密钥、要求用户重新登录。
+* PostgreSQL 凭据、JWT 签名密钥、示例账户密码以及部署环境配置文件均属于仅限服务器端使用的敏感信息。
 * 上传文件会被强制作为附件下载，不会由应用以内联形式渲染，也不会被应用执行。
 
 ## 数据卷生命周期

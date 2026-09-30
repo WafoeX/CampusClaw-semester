@@ -3,6 +3,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -19,7 +20,11 @@ class IdentityResponse(BaseModel):
     account: str
     role: str
     class_id: uuid.UUID
-    csrf_token: str
+
+
+class LoginResponse(IdentityResponse):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
     expires_at: datetime
 
 
