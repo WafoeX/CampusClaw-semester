@@ -59,13 +59,16 @@ def postgres_api_fixture(tmp_path: Path) -> Iterator[PostgresApiFixture]:
         with admin_engine.connect() as connection:
             driver_connection = connection.connection.driver_connection
             assert driver_connection is not None
+            driver_connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             driver_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         database = Database(raw_url)
 
         @event.listens_for(database.engine, "connect")
         def set_test_search_path(dbapi_connection: Any, _: Any) -> None:
             with dbapi_connection.cursor() as cursor:
-                cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+                cursor.execute(
+                    sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema))
+                )
 
         Base.metadata.create_all(database.engine)
         passwords = {

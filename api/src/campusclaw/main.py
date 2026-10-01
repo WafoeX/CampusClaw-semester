@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from campusclaw.api.routes_auth import router as auth_router
 from campusclaw.api.routes_health import router as health_router
+from campusclaw.api.routes_knowledge import router as knowledge_router
 from campusclaw.api.routes_materials import router as materials_router
 from campusclaw.application.materials import reconcile_storage
 from campusclaw.application.tokens import TokenService
@@ -51,6 +52,7 @@ def create_app(
     application = FastAPI(title="CampusClaw API", version="0.1.0", lifespan=lifespan)
     application.include_router(auth_router)
     application.include_router(materials_router)
+    application.include_router(knowledge_router)
     application.include_router(health_router)
     return application
 

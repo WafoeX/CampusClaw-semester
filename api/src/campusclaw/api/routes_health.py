@@ -14,7 +14,8 @@ from campusclaw.api.dependencies import get_database, get_settings
 from campusclaw.config import Settings
 from campusclaw.persistence.database import Database
 
-EXPECTED_ALEMBIC_HEAD = "20260929_0002"
+EXPECTED_ALEMBIC_HEAD = "20260929_0003"
+LEGACY_ALEMBIC_HEAD = "20260929_0002"
 _ALEMBIC_VERSION = MetaData()
 _ALEMBIC_VERSION_TABLE = Table(
     "alembic_version",
@@ -24,11 +25,14 @@ _ALEMBIC_VERSION_TABLE = Table(
 router = APIRouter(tags=["health"])
 
 
-def _database_is_ready(database: Database) -> bool:
+def _database_version(database: Database) -> str | None:
     with database.engine.connect() as connection:
         connection.execute(select(1))
-        version = connection.scalar(select(_ALEMBIC_VERSION_TABLE.c.version_num))
-    return version == EXPECTED_ALEMBIC_HEAD
+        return connection.scalar(select(_ALEMBIC_VERSION_TABLE.c.version_num))
+
+
+def _database_is_ready(database: Database) -> bool:
+    return _database_version(database) in {LEGACY_ALEMBIC_HEAD, EXPECTED_ALEMBIC_HEAD}
 
 
 def _storage_is_ready(root: Path) -> bool:
@@ -51,11 +55,23 @@ def health(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, str]:
     try:
-        if not _database_is_ready(database) or not _storage_is_ready(settings.UPLOAD_ROOT):
+        version = _database_version(database)
+        if version not in {LEGACY_ALEMBIC_HEAD, EXPECTED_ALEMBIC_HEAD} or not _storage_is_ready(
+            settings.UPLOAD_ROOT
+        ):
             raise RuntimeError("readiness dependency unavailable")
     except (OSError, SQLAlchemyError, RuntimeError):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"status": "unavailable", "code": "not_ready"},
         ) from None
-    return {"status": "ok"}
+    if version == LEGACY_ALEMBIC_HEAD:
+        return {"status": "ok"}
+    return {
+        "status": "ok",
+        "retrieval_schema": "ready",
+        "indexer": "ready",
+        "qdrant": "configured",
+        "embedding": "configured" if settings.EMBEDDING_ENDPOINT else "degraded",
+        "generation": "configured" if settings.GENERATION_ENDPOINT else "degraded",
+    }

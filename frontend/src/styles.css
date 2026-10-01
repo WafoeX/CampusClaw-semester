@@ -658,6 +658,128 @@ input:focus-visible {
   font-size: 2rem;
 }
 
+/* Knowledge Q&A */
+.knowledge-panel {
+  margin-top: 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  background: var(--surface-soft);
+}
+
+.knowledge-form {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1.15rem;
+}
+
+.knowledge-form label,
+.knowledge-controls label {
+  color: #48383b;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.knowledge-form textarea,
+.knowledge-controls select {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 0.9rem;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+}
+
+.knowledge-form textarea:focus,
+.knowledge-controls select:focus {
+  border-color: var(--red-700);
+  outline: 3px solid rgb(233 91 112 / 20%);
+}
+
+.knowledge-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.35rem;
+}
+
+.knowledge-controls .primary-button {
+  margin-left: auto;
+}
+
+.knowledge-result {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.knowledge-answer,
+.knowledge-refusal {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.knowledge-answer a {
+  color: var(--red-800);
+  font-weight: 800;
+}
+
+.knowledge-refusal {
+  font-weight: 750;
+}
+
+.degraded-notice {
+  margin: 0 0 0.8rem;
+  color: #805b0d;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.knowledge-sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.source-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem;
+  background: #fff;
+}
+
+.source-card h3,
+.source-card p {
+  margin: 0;
+}
+
+.source-card h3 {
+  color: var(--red-900);
+  font-size: 0.92rem;
+}
+
+.source-card > p:not(.filename):not(.muted) {
+  margin-top: 0.7rem;
+  color: #4e3d40;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.source-card .muted {
+  margin-top: 0.55rem;
+  font-size: 0.76rem;
+}
+
+.source-card .download-link {
+  width: 100%;
+  margin-top: 0.7rem;
+}
+
 /* Upload */
 .compact-hero {
   align-items: center;

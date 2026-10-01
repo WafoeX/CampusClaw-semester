@@ -12,7 +12,15 @@ def constraint_names(table_name: str, kind: type[Constraint]) -> set[str]:
 
 
 def test_complete_model_metadata() -> None:
-    assert set(Base.metadata.tables) == {"classes", "users", "materials"}
+    assert set(Base.metadata.tables) == {
+        "classes",
+        "users",
+        "materials",
+        "material_search_states",
+        "material_index_versions",
+        "knowledge_chunks",
+        "material_index_jobs",
+    }
 
 
 def test_user_membership_role_and_uniqueness_constraints() -> None:
@@ -21,6 +29,15 @@ def test_user_membership_role_and_uniqueness_constraints() -> None:
     assert users.c.class_id.foreign_keys.pop().target_fullname == "classes.id"
     assert "ck_users_role_supported" in constraint_names("users", CheckConstraint)
     assert "uq_users_account" in constraint_names("users", UniqueConstraint)
+
+
+def test_knowledge_chunks_use_authoritative_text_without_vectors() -> None:
+    chunks = Base.metadata.tables["knowledge_chunks"]
+    assert "text" in chunks.c
+    assert "normalized_text" in chunks.c
+    assert "vector" not in chunks.c
+    assert "point_id" not in chunks.c
+    assert any(index.name == "ix_knowledge_chunks_normalized_text_trgm" for index in chunks.indexes)
 
 
 def test_no_server_managed_session_table_is_declared() -> None:

@@ -4,9 +4,9 @@
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, ValidationError
+from pydantic import AliasChoices, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=None,
         case_sensitive=True,
+        populate_by_name=True,
         extra="ignore",
         hide_input_in_errors=True,
     )
@@ -42,6 +43,100 @@ class Settings(BaseSettings):
     DEMO_ALPHA_STUDENT_PASSWORD: SeedPassword | None = None
     DEMO_BETA_TEACHER_PASSWORD: SeedPassword | None = None
     DEMO_BETA_STUDENT_PASSWORD: SeedPassword | None = None
+
+    # Knowledge retrieval remains server-only.  Optional endpoints let the
+    # ordinary material library run while providers are deliberately disabled.
+    EMBEDDING_ENDPOINT: Annotated[
+        str | None,
+        Field(validation_alias=AliasChoices("EMBEDDING_ENDPOINT", "EMBEDDING_BASE_URL")),
+    ] = None
+    EMBEDDING_API_KEY: SecretStr | None = None
+    EMBEDDING_DATA_BOUNDARY: Literal["private", "approved_external"] = "private"
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIMENSION: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=8192,
+            validation_alias=AliasChoices("EMBEDDING_DIMENSION", "EMBEDDING_DIM"),
+        ),
+    ] = 1536
+    EMBEDDING_TIMEOUT_SECONDS: Annotated[float, Field(gt=0, le=120)] = 15.0
+    EMBEDDING_BATCH_SIZE: Annotated[int, Field(ge=1, le=128)] = 32
+    EMBEDDING_MAX_RETRIES: Annotated[int, Field(ge=0, le=5)] = 2
+
+    GENERATION_ENDPOINT: str | None = None
+    GENERATION_API_KEY: SecretStr | None = None
+    GENERATION_DATA_BOUNDARY: Literal["private", "approved_external"] = "private"
+    GENERATION_MODEL: str = "grounded-answer"
+    GENERATION_TEMPERATURE: Annotated[float, Field(ge=0, le=0.3)] = 0.0
+    GENERATION_TIMEOUT_SECONDS: Annotated[float, Field(gt=0, le=120)] = 30.0
+    GENERATION_MAX_OUTPUT_TOKENS: Annotated[int, Field(ge=32, le=2048)] = 256
+    GENERATION_EVIDENCE_CHAR_BUDGET: Annotated[int, Field(ge=256, le=100_000)] = 6_000
+    GENERATION_STRUCTURED_OUTPUT: bool = True
+    GENERATION_PROMPT_VERSION: str = "grounded-v1"
+    GENERATION_MAX_RETRIES: Annotated[int, Field(ge=0, le=2)] = 1
+
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_API_KEY: SecretStr | None = None
+    QDRANT_COLLECTION: str = "campusclaw-knowledge-v1"
+    QDRANT_DISTANCE: Literal["Cosine", "Dot", "Euclid"] = "Cosine"
+    QDRANT_TIMEOUT_SECONDS: Annotated[float, Field(gt=0, le=60)] = 5.0
+
+    QUERY_MAX_LENGTH: Annotated[int, Field(ge=1, le=10_000)] = 2_000
+    QUERY_DEFAULT_RESULT_LIMIT: Annotated[int, Field(ge=1, le=50)] = 6
+    QUERY_MAX_RESULT_LIMIT: Annotated[int, Field(ge=1, le=100)] = 12
+    QUERY_MAX_CANDIDATES: Annotated[int, Field(ge=1, le=500)] = 100
+    QUERY_RRF_K: Annotated[int, Field(ge=1, le=10_000)] = 60
+    EXTRACTION_MAX_BYTES: Annotated[int, Field(ge=1, le=1_073_741_824)] = 52_428_800
+    EXTRACTION_MAX_CHARS: Annotated[int, Field(ge=1, le=2_000_000)] = 500_000
+    EXTRACTION_CHUNK_CHARS: Annotated[int, Field(ge=128, le=20_000)] = 800
+    EXTRACTION_CHUNK_OVERLAP: Annotated[int, Field(ge=0, le=1_000)] = 120
+    EXTRACTION_MAX_CHUNKS: Annotated[int, Field(ge=1, le=20_000)] = 2_000
+    WORKER_LEASE_SECONDS: Annotated[int, Field(ge=5, le=86_400)] = 300
+    WORKER_MAX_ATTEMPTS: Annotated[int, Field(ge=1, le=10)] = 3
+    QA_RATE_LIMIT_PER_MINUTE: Annotated[int, Field(ge=1, le=1_000)] = 30
+
+    @model_validator(mode="after")
+    def validate_provider_boundaries(self) -> "Settings":
+        for prefix, endpoint, boundary, key in (
+            (
+                "EMBEDDING",
+                self.EMBEDDING_ENDPOINT,
+                self.EMBEDDING_DATA_BOUNDARY,
+                self.EMBEDDING_API_KEY,
+            ),
+            (
+                "GENERATION",
+                self.GENERATION_ENDPOINT,
+                self.GENERATION_DATA_BOUNDARY,
+                self.GENERATION_API_KEY,
+            ),
+        ):
+            if endpoint is None or not endpoint.strip():
+                continue
+            normalized = endpoint.strip()
+            if not normalized or not normalized.startswith(("http://", "https://")):
+                raise ValueError(f"{prefix}_ENDPOINT must be an HTTP(S) URL")
+            if boundary == "approved_external" and not normalized.startswith("https://"):
+                raise ValueError(f"{prefix}_ENDPOINT requires HTTPS for approved external mode")
+            if boundary == "approved_external" and key is None:
+                raise ValueError(f"{prefix}_API_KEY is required for approved external mode")
+            if key is not None and not key.get_secret_value().strip():
+                raise ValueError(f"{prefix}_API_KEY must not be empty")
+        if not self.QDRANT_URL.strip().startswith(("http://", "https://")):
+            raise ValueError("QDRANT_URL must be an HTTP(S) URL")
+        if not self.QDRANT_COLLECTION.strip():
+            raise ValueError("QDRANT_COLLECTION must not be empty")
+        if not self.EMBEDDING_MODEL.strip() or not self.GENERATION_MODEL.strip():
+            raise ValueError("provider model names must not be empty")
+        if not self.GENERATION_PROMPT_VERSION.strip():
+            raise ValueError("GENERATION_PROMPT_VERSION must not be empty")
+        if self.QUERY_DEFAULT_RESULT_LIMIT > self.QUERY_MAX_RESULT_LIMIT:
+            raise ValueError("QUERY_DEFAULT_RESULT_LIMIT must not exceed QUERY_MAX_RESULT_LIMIT")
+        if self.EXTRACTION_CHUNK_OVERLAP >= self.EXTRACTION_CHUNK_CHARS:
+            raise ValueError("EXTRACTION_CHUNK_OVERLAP must be smaller than chunk size")
+        return self
 
     def require_seed_passwords(self) -> dict[str, SecretStr]:
         """Return all seed passwords, failing before any seed side effect."""

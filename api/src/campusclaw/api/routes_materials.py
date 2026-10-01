@@ -30,6 +30,7 @@ from campusclaw.application.storage import (
 )
 from campusclaw.config import Settings
 from campusclaw.persistence.database import Database
+from campusclaw.persistence.knowledge import KnowledgeRepository
 from campusclaw.persistence.materials import MaterialRepository
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
@@ -43,8 +44,10 @@ def material_not_found() -> HTTPException:
     )
 
 
-def material_response(material: object) -> MaterialResponse:
-    return MaterialResponse.model_validate(material)
+def material_response(material: object, *, retrieval_status: str = "pending") -> MaterialResponse:
+    return MaterialResponse.model_validate(material).model_copy(
+        update={"retrieval_status": retrieval_status}
+    )
 
 
 @router.get("", response_model=list[MaterialResponse])
@@ -52,7 +55,11 @@ def list_materials(
     principal: Annotated[Principal, Depends(require_supported_role)],
     database: Annotated[DatabaseSession, Depends(get_db)],
 ) -> list[MaterialResponse]:
-    return [material_response(item) for item in repository.list_ready(database, principal.class_id)]
+    knowledge = KnowledgeRepository()
+    return [
+        material_response(item, retrieval_status=knowledge.search_status(database, item.id))
+        for item in repository.list_ready(database, principal.class_id)
+    ]
 
 
 @router.post("", response_model=MaterialResponse, status_code=status.HTTP_201_CREATED)
@@ -143,7 +150,10 @@ def get_material(
     material = repository.get_metadata(database, principal.class_id, material_id)
     if material is None:
         raise material_not_found()
-    return material_response(material)
+    return material_response(
+        material,
+        retrieval_status=KnowledgeRepository().search_status(database, material.id),
+    )
 
 
 @router.get("/{material_id}/download")

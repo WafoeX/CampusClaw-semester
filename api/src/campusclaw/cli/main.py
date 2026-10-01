@@ -4,12 +4,14 @@
 import argparse
 import getpass
 import sys
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from campusclaw.application.indexing import IndexWorker, aggregate_index_status
 from campusclaw.application.seed import seed_demo
 from campusclaw.config import get_settings
 from campusclaw.domain.models import Class, User, UserRole
@@ -65,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--role", required=True, choices=[role.value for role in UserRole])
     create.add_argument("--create-class", action="store_true")
     subparsers.add_parser("seed-demo", help="idempotently initialize demo data")
+    indexer = subparsers.add_parser("indexer", help="process bounded material-index jobs")
+    indexer.add_argument("--max-jobs", type=int, default=100)
+    subparsers.add_parser("backfill", help="enqueue all ready materials for indexing")
+    status_parser = subparsers.add_parser("index-status", help="show aggregate indexing status")
+    status_parser.add_argument("--class-id", required=True, type=uuid.UUID)
+    subparsers.add_parser("vector-rebuild", help="rebuild vectors from PostgreSQL chunks")
+    subparsers.add_parser("qdrant-snapshot", help="create a server-side Qdrant snapshot")
+    reconcile = subparsers.add_parser("reconcile-vectors", help="reconcile one class vector index")
+    reconcile.add_argument("--class-id", required=True, type=uuid.UUID)
     return parser
 
 
@@ -85,6 +96,37 @@ def app(argv: Sequence[str] | None = None) -> None:
                 )
             return
 
+        if args.command == "indexer":
+            results = IndexWorker(database, settings).run_until_empty(
+                max_jobs=max(1, args.max_jobs)
+            )
+            searchable = sum(result.status == "searchable" for result in results)
+            print(f"indexer complete: jobs={len(results)} searchable={searchable}")
+            return
+        if args.command == "backfill":
+            count = IndexWorker(database, settings).backfill()
+            print(f"index jobs enqueued: {count}")
+            return
+        if args.command == "vector-rebuild":
+            count = IndexWorker(database, settings).rebuild_vectors()
+            print(f"vectors rebuilt: {count}")
+            return
+        if args.command == "qdrant-snapshot":
+            from campusclaw.application.vector import QdrantVectorStore
+
+            QdrantVectorStore(settings).create_snapshot()
+            print("qdrant snapshot created")
+            return
+        if args.command == "reconcile-vectors":
+            report = IndexWorker(database, settings).reconcile_class(args.class_id)
+            values = " ".join(f"{key}={report[key]}" for key in sorted(report))
+            print("vector reconciliation: " + values)
+            return
+        if args.command == "index-status":
+            status_result = aggregate_index_status(database, args.class_id)
+            values = " ".join(f"{key}={status_result[key]}" for key in sorted(status_result))
+            print("index status: " + values)
+            return
         if args.command != "create-user":
             parser.error("unsupported command")
         password = getpass.getpass("Password: ")

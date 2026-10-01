@@ -11,8 +11,10 @@ Compose 服务栈包含：
 * `migrate`：使用 API 镜像运行的一次性容器，用于执行 `alembic upgrade head`。
 * `seed`：使用 API 镜像运行的一次性容器，用于执行由环境变量控制的演示数据初始化。
 * `db`：运行在内部数据网络中的 PostgreSQL 16。其端口不会发布到主机。
+* `qdrant`：内部、可重建的向量索引，仅保存浮点向量和 PostgreSQL chunk ID/class/material/version 标识；无主机端口。
+* `indexer`：内部 durable worker，读取材料卷并写 PostgreSQL/Qdrant；无主机端口。
 
-网关会将同源的 `/api/*` 和 `/health` 请求代理至 `api:8000`。因此，API 和数据库均属于 Compose 内部服务，而不是独立暴露在主机上的端点。`postgres-data` 用于存储关系型数据，`materials-data` 用于存储上传的文件。
+网关会将同源的 `/api/*` 和 `/health` 请求代理至 `api:8000`。因此，API 和数据库均属于 Compose 内部服务，而不是独立暴露在主机上的端点。`postgres-data` 用于存储关系型数据，`materials-data` 用于存储上传的文件，`qdrant-data` 用于可选的向量快照。PostgreSQL 是 chunk 正文、来源、生命周期和授权的唯一权威存储。
 
 可以通过以下命令检查这一服务边界：
 
@@ -119,6 +121,26 @@ SEED_DEMO_DATA=true docker compose --env-file .env \
 
 该覆盖配置需要显式启用，从而保证默认行为是安全的，同时使这一行为能够被测试。
 
+## 知识库问答、索引和数据边界
+
+资料库提供 `keyword`、`vector` 和 `hybrid` 三种检索方式，省略方式时使用 hybrid，并用固定 RRF 合并独立排名。问答是单轮的；浏览器只发送问题、结果上限和检索方式，不发送班级 ID、历史答案、模型地址或凭据。生成模型只收到服务端重新授权后的有界证据，回答必须引用本次请求的来源 ID；没有充分证据时固定返回 `根据本班资料无法回答该问题`。
+
+仅 PDF、UTF-8 纯文本和 Markdown 建立索引，PDF 不做 OCR；不支持的资料仍可列表、下载。PostgreSQL 保存原文、页码/行号和状态，Qdrant point ID 与 `knowledge_chunks.id` 相同且 payload 不含正文。提示注入被当作不可信资料，不能改变班级、系统策略、工具或引用规则；答案和摘录按纯文本渲染。
+
+嵌入和生成配置独立：优先使用校内私有 HTTPS 端点；`approved_external` 必须由运维显式配置并使用 HTTPS/服务端密钥。端点、密钥、prompt、问题、证据、答案和 provider body 不进入常规日志、health 或 CLI 输出。模型不可用时 keyword 仍可用，hybrid 可安全降级为 `keyword_only`；显式 vector 不回退到 keyword。生成失败返回可重试的安全错误，不把摘录伪装成答案。
+
+常用受控命令（输出仅包含聚合状态，不包含正文）:
+
+```sh
+docker compose --env-file .env run --rm --entrypoint campusclaw api backfill
+docker compose --env-file .env run --rm --entrypoint campusclaw api indexer
+docker compose --env-file .env run --rm --entrypoint campusclaw api index-status --class-id <class-uuid>
+docker compose --env-file .env run --rm --entrypoint campusclaw api vector-rebuild
+docker compose --env-file .env run --rm --entrypoint campusclaw api qdrant-snapshot
+```
+
+更换嵌入模型、维度或距离时必须新建兼容 collection 并从 PostgreSQL authoritative chunks 完整执行 `vector-rebuild`；Qdrant snapshot 只用于加速恢复，不替代 PostgreSQL/materials 协调备份。恢复后运行 `reconcile-vectors`，验证同 ID、class/material/version payload、active ready chunk hydration，并删除 orphan/incompatible points。生成模型或 prompt 版本变化不需要重建向量，但必须重新通过结构化输出、引用、拒答和提示注入验收。
+
 ## 数据库迁移与健康检查
 
 数据库迁移仅由一次性的 `migrate` 服务执行：
@@ -131,9 +153,11 @@ API 依赖数据库迁移和种子数据初始化成功完成后才能启动。
 
 公开的健康检查端点会检查：
 
-* 是否能够完成一次数据库往返访问；
-* 当前数据库是否处于预期的 Alembic 最新版本；
-* 教学资料存储位置是否可写。
+* 是否能够完成一次数据库往返访问和 retrieval schema 迁移检查；
+* 教学资料存储位置是否可写；
+* retrieval schema、indexer freshness/queue、Qdrant 配置，以及 embedding/generation 是否已配置或处于 degraded。
+
+health 不会调用模型、不发送真实问题或资料，也不返回凭据、请求头、prompt、正文或 provider 原始错误。模型/Qdrant degraded 不会让普通资料列表、元数据或下载不可用。
 
 该端点只会返回少量、不包含敏感信息的响应；它绝不会返回密码、数据库连接字符串或 HMAC 密钥。
 
@@ -299,10 +323,10 @@ python tests/check_backup_restore.py
 本学期的实现有意保留以下限制：
 
 * 仅支持一个 API 写入实例，并使用本地具名数据卷进行文件存储；不支持 API 横向扩展，也不支持共享对象存储。
-* 不提供内容解析、恶意软件扫描、内容执行或内联渲染功能。
-* 不提供教学资料搜索、全文检索、向量检索、问答、RAG 或智能对话功能。
-* 不提供作业提交、教学资料编辑、删除、版本管理、分享链接或用户注册功能。
-* 不提供密码找回、外部身份提供商、账户管理界面或技能/功能开关。
+* 不提供 OCR、Office 文档解析、图片/音频/视频转写、恶意软件扫描、内容执行或内联渲染功能。
+* 不提供多轮智能对话、持久化会话记忆、自主 Agent、模型工具调用或模型选择班级范围。
+* 不提供作业提交、学情诊断、教案/命题生成、教学资料编辑、删除、版本管理、分享链接或用户注册功能。
+* 不提供密码找回、外部身份提供商、账户管理界面、技能/功能开关、MCP、多智能体或知识图谱。
 * 每个账户只能属于一个班级，并且教师只能访问其所属班级。
 
 以上内容均属于明确规定的本学期非目标，而不是未公开的待办功能。

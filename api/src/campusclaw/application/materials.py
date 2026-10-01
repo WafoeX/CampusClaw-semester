@@ -21,6 +21,7 @@ from campusclaw.application.storage import (
 )
 from campusclaw.domain.models import Material, MaterialState
 from campusclaw.persistence.database import Database
+from campusclaw.persistence.knowledge import KnowledgeRepository
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,12 @@ def persist_material_upload(
             session.flush()
             material = ready_material
         published = True
+        # Retrieval is additive: an indexing enqueue failure must not make a
+        # successfully uploaded material unavailable for listing or download.
+        with suppress(Exception), database.transaction() as session:
+            ready_material = session.get(Material, material.id)
+            if ready_material is not None:
+                KnowledgeRepository().enqueue_job(session, ready_material)
         return material
     finally:
         if not published:

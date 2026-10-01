@@ -55,6 +55,90 @@ def database_rows(project: str, environment: dict[str, str]) -> str:
     return result.stdout.decode().strip()
 
 
+def seed_retrieval_fixture(project: str, environment: dict[str, str]) -> None:
+    statement = """
+    WITH source AS (
+      SELECT id, class_id, sha256 FROM materials ORDER BY id LIMIT 1
+    )
+    INSERT INTO material_index_versions (
+      id, material_id, class_id, source_sha256, extraction_version,
+      chunking_version, embedding_model, vector_dimension, build_state, completed_at
+    )
+    SELECT
+      '20000000-0000-0000-0000-000000000001'::uuid,
+      id, class_id, sha256, 'acceptance-v1', 'acceptance-v1', 'acceptance-model',
+      4, 'ready', now()
+    FROM source;
+
+    WITH source AS (
+      SELECT id, class_id FROM materials ORDER BY id LIMIT 1
+    )
+    INSERT INTO material_search_states (
+      id, material_id, class_id, status, active_version_id
+    )
+    SELECT
+      '20000000-0000-0000-0000-000000000002'::uuid,
+      id, class_id, 'searchable',
+      '20000000-0000-0000-0000-000000000001'::uuid
+    FROM source;
+
+    WITH source AS (
+      SELECT id, class_id FROM materials ORDER BY id LIMIT 1
+    )
+    INSERT INTO knowledge_chunks (
+      id, index_version_id, material_id, class_id, ordinal, text,
+      normalized_text, text_hash, line_start, line_end
+    )
+    SELECT
+      '20000000-0000-0000-0000-000000000003'::uuid,
+      '20000000-0000-0000-0000-000000000001'::uuid,
+      id, class_id, 0, 'backup retrieval fixture', 'backup retrieval fixture',
+      repeat('a', 64), 1, 1
+    FROM source;
+    """
+    compose(
+        project,
+        environment,
+        "exec",
+        "-T",
+        "db",
+        "psql",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-U",
+        environment["POSTGRES_USER"],
+        "-d",
+        environment["POSTGRES_DB"],
+        "-c",
+        statement,
+    )
+
+
+def retrieval_rows(project: str, environment: dict[str, str]) -> str:
+    query = (
+        "SELECT c.id || '|' || c.text_hash || '|' || s.status "
+        "FROM knowledge_chunks c "
+        "JOIN material_search_states s ON s.active_version_id = c.index_version_id "
+        "ORDER BY c.id"
+    )
+    result = compose(
+        project,
+        environment,
+        "exec",
+        "-T",
+        "db",
+        "psql",
+        "-U",
+        environment["POSTGRES_USER"],
+        "-d",
+        environment["POSTGRES_DB"],
+        "-At",
+        "-c",
+        query,
+    )
+    return result.stdout.decode().strip()
+
+
 def volume_rows(project: str, environment: dict[str, str]) -> str:
     code = (
         "import hashlib, pathlib; "
@@ -192,9 +276,12 @@ def main() -> None:
     )
     try:
         compose(project, environment, "up", "-d", "db", "migrate", "seed", "api", "web")
+        seed_retrieval_fixture(project, environment)
         before_database = database_rows(project, environment)
+        before_retrieval = retrieval_rows(project, environment)
         before_files = volume_rows(project, environment)
         assert before_database.count("\n") + 1 == 2
+        assert before_retrieval.count("\n") + 1 == 1
         assert before_files.count("\n") + 1 == 2
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -252,6 +339,7 @@ def main() -> None:
             restore_material_archive(project, environment, backup_dir / "materials.tar.gz")
 
         assert database_rows(project, environment) == before_database
+        assert retrieval_rows(project, environment) == before_retrieval
         assert volume_rows(project, environment) == before_files
         compose(project, environment, "up", "-d", "api", "web")
         with urlopen("http://127.0.0.1:18082/health", timeout=10) as response:

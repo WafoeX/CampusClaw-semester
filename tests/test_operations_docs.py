@@ -41,17 +41,23 @@ def test_operations_guide_matches_semester_non_goals() -> None:
     required_limits = (
         "一个 API 写入实例",
         "本地具名数据卷",
-        "内容解析",
+        "OCR",
         "恶意软件扫描",
         "内容执行",
         "内联渲染",
-        "教学资料搜索",
-        "问答",
-        "智能对话",
+        "多轮智能对话",
+        "自主 Agent",
+        "模型工具调用",
         "作业提交",
+        "学情诊断",
+        "教案/命题生成",
         "用户注册",
         "密码找回",
         "技能/功能开关",
+        "MCP",
+        "多智能体",
+        "知识图谱",
         "每个账户只能属于一个班级",
     )
     assert all(limit in OPERATIONS for limit in required_limits)
+    assert "不提供教学资料搜索、全文检索、向量检索、问答、RAG" not in OPERATIONS
