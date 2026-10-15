@@ -1,0 +1,188 @@
+# Standalone: never merge with docker-compose.yml. Test values only.
+---
+name: campusclaw-apitest
+
+x-runtime: &runtime
+  image: campusclaw-apitest-api:local
+  build:
+    context: ./api
+  environment: &environment
+    APP_ENV: demo
+    DATABASE_URL: >-
+      postgresql+psycopg://apitest_owner:apitest-owner-only@db:5432/campusclaw_apitest
+    JWT_SIGNING_KEY: apitest-only-signing-key-not-for-deployment-2026
+    UPLOAD_ROOT: /var/lib/campusclaw/materials
+    SEED_DEMO_DATA: "false"
+    EMBEDDING_ENDPOINT: http://provider-stub:8000/v1
+    EMBEDDING_MODEL: fixture-embedding
+    EMBEDDING_DIMENSION: "8"
+    EMBEDDING_DATA_BOUNDARY: private
+    GENERATION_ENDPOINT: http://provider-stub:8000/v1
+    GENERATION_MODEL: "${APITEST_GENERATION_MODEL:-fixture-delayed}"
+    GENERATION_DATA_BOUNDARY: private
+    QDRANT_URL: http://qdrant:6333
+    QDRANT_COLLECTION: campusclaw-apitest-v1
+    PYTHONPATH: /work:/app/src
+  networks: [test]
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: campusclaw_apitest
+      POSTGRES_USER: apitest_admin
+      POSTGRES_PASSWORD: apitest-admin-only
+    volumes:
+      - test-postgres:/var/lib/postgresql/data
+      - ./apitest/init-db.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    networks: [test]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U apitest_admin -d campusclaw_apitest"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *runtime
+    command: [alembic, upgrade, head]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  fixtures:
+    <<: *runtime
+    command: [python, -m, apitest.prepare]
+    environment:
+      <<: *environment
+      APITEST_FIXTURES: "yes"
+      SEED_DEMO_DATA: "true"
+      DEMO_ALPHA_TEACHER_PASSWORD: apitest-account-only
+      DEMO_ALPHA_STUDENT_PASSWORD: apitest-account-only
+      DEMO_BETA_TEACHER_PASSWORD: apitest-account-only
+      DEMO_BETA_STUDENT_PASSWORD: apitest-account-only
+    volumes:
+      - test-materials:/var/lib/campusclaw/materials
+      - ./apitest:/work/apitest:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  provider-stub:
+    <<: *runtime
+    command:
+      - uvicorn
+      - apitest.provider_stub:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-access-log
+    environment:
+      PYTHONPATH: /work
+    volumes:
+      - ./apitest:/work/apitest:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.3
+    networks: [test]
+    volumes:
+      - test-qdrant:/qdrant/storage
+    healthcheck:
+      test: [CMD-SHELL, "kill -0 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  indexer:
+    <<: *runtime
+    command: [sh, -c, "campusclaw backfill && campusclaw indexer"]
+    volumes:
+      - test-materials:/var/lib/campusclaw/materials:ro
+    depends_on:
+      fixtures:
+        condition: service_completed_successfully
+      provider-stub:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  api:
+    <<: *runtime
+    command:
+      - uvicorn
+      - campusclaw.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-access-log
+    volumes:
+      - test-materials:/var/lib/campusclaw/materials
+    depends_on:
+      indexer:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    image: campusclaw-apitest-web:local
+    build:
+      context: ./frontend
+    ports: ["127.0.0.1:${APITEST_PORT:-18088}:8080"]
+    networks: [test]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  apitest:
+    image: campusclaw-apitest-api:local
+    profiles: [runner]
+    command: [python, /work/apitest/run_all.py]
+    working_dir: /work
+    user: "${APITEST_UID:-1000}:${APITEST_GID:-1000}"
+    environment:
+      PYTHONPATH: /work
+      APITEST_BASE_URL: http://gateway:8080
+      APITEST_DATABASE_URL: >-
+        postgresql://apitest_reader:apitest-reader-only@db:5432/campusclaw_apitest
+    volumes:
+      - ./apitest:/work/apitest:ro
+      - ./apitest/reports:/work/apitest/reports
+    networks: [test]
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+volumes:
+  test-postgres:
+  test-materials:
+  test-qdrant:
+
+networks:
+  test:
+    internal: true

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Annotated, cast
 
 from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session as DatabaseSession
 
 from campusclaw.application.tokens import TokenService
@@ -66,12 +67,23 @@ def bearer_token(request: Request) -> str | None:
     return parts[1]
 
 
+class CampusBearer(HTTPBearer):
+    async def __call__(self, request: Request) -> HTTPAuthorizationCredentials | None:
+        # Preserve legacy whitespace/case parsing and the exact domain 401 body;
+        # HTTPBearer's default 403/malformed-header behavior is deliberately disabled.
+        token = bearer_token(request)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token) if token else None
+
+
+bearer_security = CampusBearer(auto_error=False, scheme_name="BearerJWT", bearerFormat="JWT")
+
+
 def get_current_principal(
-    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_security)],
     database: Annotated[DatabaseSession, Depends(get_db)],
     tokens: Annotated[TokenService, Depends(get_token_service)],
 ) -> Principal:
-    token = bearer_token(request)
+    token = credentials.credentials if credentials else None
     user_id = tokens.subject(token) if token else None
     if user_id is None:
         raise unauthenticated()

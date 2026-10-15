@@ -20,6 +20,10 @@ from campusclaw.domain.security import PasswordService  # pyright: ignore[report
 from campusclaw.main import create_app  # pyright: ignore[reportMissingTypeStubs]
 from campusclaw.persistence.database import Database  # pyright: ignore[reportMissingTypeStubs]
 
+# Load shared chat fixtures during conftest collection, after pytest-cov starts.
+# CLI -p imports application modules too early and misses import-time coverage.
+pytest_plugins = ("tests.test_conversation_api",)
+
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
@@ -65,12 +69,20 @@ def postgres_api_fixture(tmp_path: Path) -> Iterator[PostgresApiFixture]:
 
         @event.listens_for(database.engine, "connect")
         def set_test_search_path(dbapi_connection: Any, _: Any) -> None:
-            with dbapi_connection.cursor() as cursor:
-                cursor.execute(
-                    sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema))
-                )
+            # SET must survive rollbacks on newly opened concurrent connections.
+            previous = dbapi_connection.autocommit
+            dbapi_connection.autocommit = True
+            try:
+                with dbapi_connection.cursor() as cursor:
+                    cursor.execute(
+                        sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema))
+                    )
+            finally:
+                dbapi_connection.autocommit = previous
 
-        Base.metadata.create_all(database.engine)
+        # The schema is newly created. Do not let checkfirst discover identically
+        # named tables in public through search_path and silently reuse them.
+        Base.metadata.create_all(database.engine, checkfirst=False)
         passwords = {
             "alpha_teacher": uuid.uuid4().hex,
             "alpha_student": uuid.uuid4().hex,

@@ -97,6 +97,18 @@ class Settings(BaseSettings):
     WORKER_MAX_ATTEMPTS: Annotated[int, Field(ge=1, le=10)] = 3
     QA_RATE_LIMIT_PER_MINUTE: Annotated[int, Field(ge=1, le=1_000)] = 30
 
+    AGENT_NAME_MAX_CHARS: Annotated[int, Field(ge=1, le=120)] = 120
+    AGENT_DESCRIPTION_MAX_CHARS: Annotated[int, Field(ge=0, le=1_000)] = 1_000
+    AGENT_PROMPT_MAX_CHARS: Annotated[int, Field(ge=1, le=20_000)] = 12_000
+    SKILL_NAME_MAX_CHARS: Annotated[int, Field(ge=1, le=120)] = 120
+    SKILL_INSTRUCTIONS_MAX_CHARS: Annotated[int, Field(ge=1, le=20_000)] = 12_000
+    CONVERSATION_MESSAGE_MAX_CHARS: Annotated[int, Field(ge=1, le=20_000)] = 8_000
+    CONVERSATION_HISTORY_MAX_MESSAGES: Annotated[int, Field(ge=1, le=100)] = 20
+    CONVERSATION_HISTORY_MAX_CHARS: Annotated[int, Field(ge=1, le=200_000)] = 24_000
+    SSE_HEARTBEAT_SECONDS: Annotated[float, Field(gt=0, le=60)] = 15.0
+    SSE_TASK_TIMEOUT_SECONDS: Annotated[float, Field(gt=0, le=300)] = 90.0
+    CONVERSATION_RATE_LIMIT_PER_MINUTE: Annotated[int, Field(ge=1, le=1_000)] = 30
+
     @model_validator(mode="after")
     def validate_provider_boundaries(self) -> "Settings":
         for prefix, endpoint, boundary, key in (
@@ -136,6 +148,10 @@ class Settings(BaseSettings):
             raise ValueError("QUERY_DEFAULT_RESULT_LIMIT must not exceed QUERY_MAX_RESULT_LIMIT")
         if self.EXTRACTION_CHUNK_OVERLAP >= self.EXTRACTION_CHUNK_CHARS:
             raise ValueError("EXTRACTION_CHUNK_OVERLAP must be smaller than chunk size")
+        if self.CONVERSATION_HISTORY_MAX_CHARS < self.CONVERSATION_MESSAGE_MAX_CHARS:
+            raise ValueError("CONVERSATION_HISTORY_MAX_CHARS must cover one maximum-sized message")
+        if self.SSE_HEARTBEAT_SECONDS >= self.SSE_TASK_TIMEOUT_SECONDS:
+            raise ValueError("SSE_HEARTBEAT_SECONDS must be shorter than the task timeout")
         return self
 
     def require_seed_passwords(self) -> dict[str, SecretStr]:

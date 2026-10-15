@@ -1,0 +1,25 @@
+.agent-navigation, .agent-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-block: 1rem; }
+.agent-navigation a, .agent-list a { color: var(--red-900); font-weight: 700; }
+.agent-page button { border: 1px solid var(--border-strong); border-radius: .75rem; padding: .65rem 1rem; color: var(--red-900); background: var(--surface); font-weight: 700; }
+.agent-page button:not(:disabled):hover { background: var(--red-50); border-color: var(--red-700); }
+.agent-page button:disabled { opacity: .6; }
+.agent-page button[type="submit"] { background: var(--red-900); border-color: var(--red-900); color: white; }
+.agent-page button[type="submit"]:not(:disabled):hover { background: var(--red-700); }
+.agent-page > h1 { overflow-wrap: anywhere; }
+.agent-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+.agent-form { display: flex; flex-direction: column; align-items: stretch; gap: 1rem; }
+.agent-form label { display: flex; flex-direction: column; gap: .5rem; font-weight: 700; }
+.agent-form input, .agent-form textarea, .agent-form select, .agent-page select { font: inherit; padding: .75rem; border: 1px solid var(--border-strong); border-radius: .5rem; max-width: 100%; background: white; color: var(--ink); }
+.agent-form textarea { resize: vertical; min-height: 5rem; }
+.agent-form .checkbox-label { flex-direction: row; align-items: center; margin-block: .75rem; }
+.agent-form fieldset { min-width: 0; border: 1px solid var(--border-strong); }
+.agent-list, .message-history { list-style: none; padding: 0; }
+.agent-list > li { padding-block: 1rem; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.agent-list button { margin: .35rem; }
+.plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-message { border: 1px solid var(--border); border-radius: 1rem; padding: 1rem; margin-block: 1rem; background: var(--surface); overflow-wrap: anywhere; }
+.chat-message.user { background: var(--red-50); }
+.chat-message a { color: var(--red-900); font-weight: 700; }
+.agent-page textarea:focus-visible, .agent-page select:focus-visible, .agent-page [tabindex="-1"]:focus-visible { outline: 3px solid var(--red-700); outline-offset: 3px; }
+@media (max-width: 760px) { .agent-workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .agent-page *, .agent-page *::before, .agent-page *::after { transition: none; scroll-behavior: auto; } }

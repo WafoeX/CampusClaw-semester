@@ -63,7 +63,23 @@ class RetrievalService:
         self.settings = settings
         self.repository = repository or KnowledgeRepository()
         self.embeddings = embeddings or EmbeddingClient(settings)
-        self.vectors = vectors or QdrantVectorStore(settings)
+        self._owns_embeddings = embeddings is None
+        self._owns_vectors = vectors is None
+        self._vectors = vectors
+
+    @property
+    def vectors(self) -> QdrantVectorStore:
+        # Do not contact a vector service when embeddings are unavailable and a
+        # hybrid request can immediately degrade to authorized keyword retrieval.
+        if self._vectors is None:
+            self._vectors = QdrantVectorStore(self.settings)
+        return self._vectors
+
+    def close(self) -> None:
+        if self._owns_embeddings:
+            self.embeddings.http.close()
+        if self._owns_vectors and self._vectors is not None:
+            self._vectors.client.close()
 
     def retrieve(
         self,

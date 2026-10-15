@@ -76,14 +76,26 @@ class EmbeddingClient:
 
 
 class GenerationClient:
-    def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        http_client: httpx.Client | None = None,
+        *,
+        max_payload_chars: int | None = None,
+    ) -> None:
         self.settings = settings
         self.http = http_client or httpx.Client()
+        self.max_payload_chars = (
+            max_payload_chars
+            if max_payload_chars is not None
+            else settings.GENERATION_EVIDENCE_CHAR_BUDGET + 4_000
+        )
+
+    def close(self) -> None:
+        self.http.close()
 
     def complete(self, *, system_prompt: str, user_payload: str) -> str:
-        if len(system_prompt) > 8_000 or len(user_payload) > (
-            self.settings.GENERATION_EVIDENCE_CHAR_BUDGET + 4_000
-        ):
+        if len(system_prompt) > 8_000 or len(user_payload) > self.max_payload_chars:
             raise ProviderFailure("generation_request_bounds", retryable=False)
         endpoint = self.settings.GENERATION_ENDPOINT
         if endpoint is None:

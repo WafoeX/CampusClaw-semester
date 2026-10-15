@@ -1,0 +1,9 @@
+/* Same bytes as upstream CSS data images, served locally for default-src 'self'. */
+.swagger-ui .debug-grid { background-image: url("csp-image-0.png"); }
+.swagger-ui .debug-grid-16 { background-image: url("csp-image-1.png"); }
+.swagger-ui .debug-grid-8-solid { background-image: url("csp-image-2.svg"); }
+.swagger-ui .debug-grid-16-solid { background-image: url("csp-image-3.png"); }
+.swagger-ui .copy-to-clipboard button { background-image: url("csp-image-4.svg"); }
+.swagger-ui select { background-image: url("csp-image-5.svg"); }
+.swagger-ui .checkbox input[type=checkbox]:checked+label>.item { background-image: url("csp-image-6.svg"); }
+.swagger-ui .model-toggle:after { background-image: url("csp-image-7.svg"); }

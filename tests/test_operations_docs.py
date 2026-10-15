@@ -45,7 +45,7 @@ def test_operations_guide_matches_semester_non_goals() -> None:
         "恶意软件扫描",
         "内容执行",
         "内联渲染",
-        "多轮智能对话",
+        "跨会话记忆",
         "自主 Agent",
         "模型工具调用",
         "作业提交",
@@ -53,7 +53,7 @@ def test_operations_guide_matches_semester_non_goals() -> None:
         "教案/命题生成",
         "用户注册",
         "密码找回",
-        "技能/功能开关",
+        "任意可执行技能/工具",
         "MCP",
         "多智能体",
         "知识图谱",
@@ -61,3 +61,32 @@ def test_operations_guide_matches_semester_non_goals() -> None:
     )
     assert all(limit in OPERATIONS for limit in required_limits)
     assert "不提供教学资料搜索、全文检索、向量检索、问答、RAG" not in OPERATIONS
+    assert "不提供多轮智能对话" not in OPERATIONS
+
+
+def test_chat_operations_preserve_security_retention_and_test_boundaries() -> None:
+    for term in (
+        "solution_guidance",
+        "不可变修订",
+        "历史不是",
+        "SSE_TASK_TIMEOUT_SECONDS",
+        "proxy_buffering off",
+        "proxy_read_timeout 330s",
+        "deleted_at",
+        "没有自动过期或清除任务",
+        "/api/docs",
+        "/api/openapi.json",
+        "docker-compose.apitest.yml",
+        "internal-only",
+        "只读",
+        "Bearer",
+    ):
+        assert term in OPERATIONS or term in README
+    assert "apitest/README.md" in README
+    assert "POST /api/knowledge/query" in README
+    for document in (ROOT / "README.md", ROOT / "docs" / "operations.md"):
+        import re
+
+        for target in re.findall(r"\]\(([^)]+)\)", document.read_text()):
+            if not target.startswith(("http:", "https:", "#")):
+                assert (document.parent / target.split("#")[0]).exists(), target

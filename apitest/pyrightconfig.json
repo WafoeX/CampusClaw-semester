@@ -1,0 +1,7 @@
+{
+  "extends": "../pyrightconfig.json",
+  "include": ["."],
+  "extraPaths": ["..", "../api/src"],
+  "venvPath": "../api",
+  "executionEnvironments": [{"root": ".", "extraPaths": ["..", "../api/src"]}]
+}

@@ -14,8 +14,9 @@ from campusclaw.api.dependencies import get_database, get_settings
 from campusclaw.config import Settings
 from campusclaw.persistence.database import Database
 
-EXPECTED_ALEMBIC_HEAD = "20260929_0003"
+EXPECTED_ALEMBIC_HEAD = "20261015_0006"
 LEGACY_ALEMBIC_HEAD = "20260929_0002"
+_READY_HEADS = {LEGACY_ALEMBIC_HEAD, "20260929_0003", EXPECTED_ALEMBIC_HEAD}
 _ALEMBIC_VERSION = MetaData()
 _ALEMBIC_VERSION_TABLE = Table(
     "alembic_version",
@@ -32,7 +33,7 @@ def _database_version(database: Database) -> str | None:
 
 
 def _database_is_ready(database: Database) -> bool:
-    return _database_version(database) in {LEGACY_ALEMBIC_HEAD, EXPECTED_ALEMBIC_HEAD}
+    return _database_version(database) in _READY_HEADS
 
 
 def _storage_is_ready(root: Path) -> bool:
@@ -56,9 +57,7 @@ def health(
 ) -> dict[str, str]:
     try:
         version = _database_version(database)
-        if version not in {LEGACY_ALEMBIC_HEAD, EXPECTED_ALEMBIC_HEAD} or not _storage_is_ready(
-            settings.UPLOAD_ROOT
-        ):
+        if version not in _READY_HEADS or not _storage_is_ready(settings.UPLOAD_ROOT):
             raise RuntimeError("readiness dependency unavailable")
     except (OSError, SQLAlchemyError, RuntimeError):
         raise HTTPException(

@@ -37,6 +37,43 @@ def test_enabled_seed_requires_every_password() -> None:
     assert "PASSWORD" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("AGENT_NAME_MAX_CHARS", 0),
+        ("AGENT_PROMPT_MAX_CHARS", 20_001),
+        ("SKILL_INSTRUCTIONS_MAX_CHARS", -1),
+        ("CONVERSATION_MESSAGE_MAX_CHARS", 0),
+        ("CONVERSATION_HISTORY_MAX_MESSAGES", 101),
+        ("SSE_HEARTBEAT_SECONDS", 0),
+        ("SSE_TASK_TIMEOUT_SECONDS", 301),
+        ("CONVERSATION_RATE_LIMIT_PER_MINUTE", 0),
+    ],
+)
+def test_chat_setting_bounds_reject_unsafe_values_without_secret_inputs(
+    field: str, value: int | float
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        Settings(**(BASE | {field: value}))  # type: ignore[arg-type]
+    assert field in str(caught.value)
+    assert "input_value" not in str(caught.value)
+    assert "k" * 32 not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"CONVERSATION_HISTORY_MAX_CHARS": 7_999},
+        {"SSE_HEARTBEAT_SECONDS": 90, "SSE_TASK_TIMEOUT_SECONDS": 90},
+    ],
+)
+def test_chat_setting_combinations_reject_inconsistent_budgets(values: dict[str, int]) -> None:
+    with pytest.raises(ValidationError) as caught:
+        Settings(**(BASE | values))  # type: ignore[arg-type]
+    assert "input_value" not in str(caught.value)
+    assert "k" * 32 not in str(caught.value)
+
+
 def test_seed_passwords_are_secret_values() -> None:
     passwords = {
         "DEMO_ALPHA_TEACHER_PASSWORD": "alpha-teacher-secret",

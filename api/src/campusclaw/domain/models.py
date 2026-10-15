@@ -4,8 +4,10 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -19,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -63,6 +66,32 @@ class IndexJobState(StrEnum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETE = "complete"
+    FAILED = "failed"
+
+
+class AgentState(StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    RETIRED = "retired"
+
+
+class SkillState(StrEnum):
+    ACTIVE = "active"
+    RETIRED = "retired"
+
+
+class SkillType(StrEnum):
+    SOLUTION_GUIDANCE = "solution_guidance"
+
+
+class ConversationMessageRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ConversationMessageState(StrEnum):
+    PROCESSING = "processing"
+    COMPLETED = "completed"
     FAILED = "failed"
 
 
@@ -258,6 +287,275 @@ class KnowledgeChunk(Base):
     line_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     line_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Agent(Base):
+    __tablename__ = "agents"
+    __table_args__ = (
+        UniqueConstraint("id", "class_id", name="uq_agents_id_class"),
+        UniqueConstraint("id", "class_id", "creator_id", name="uq_agents_identity"),
+        CheckConstraint("state IN ('draft', 'published', 'retired')", name="lifecycle_supported"),
+        Index("ix_agents_class_creator", "class_id", "creator_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=AgentState.DRAFT.value,
+        server_default=AgentState.DRAFT.value,
+    )
+    current_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_revisions.id", ondelete="RESTRICT"), nullable=True
+    )
+    published_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_revisions.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentRevision(Base):
+    __tablename__ = "agent_revisions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "revision_number", name="uq_agent_revisions_agent_number"),
+        UniqueConstraint("id", "class_id", "creator_id", name="uq_agent_revisions_identity"),
+        CheckConstraint("revision_number > 0", name="revision_number_positive"),
+        ForeignKeyConstraint(
+            ["agent_id", "class_id", "creator_id"],
+            ["agents.id", "agents.class_id", "agents.creator_id"],
+            name="fk_agent_revisions_agent_scope",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    creator_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1_000), nullable=True)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Skill(Base):
+    __tablename__ = "skills"
+    __table_args__ = (
+        UniqueConstraint("id", "class_id", "creator_id", name="uq_skills_identity"),
+        CheckConstraint("state IN ('active', 'retired')", name="lifecycle_supported"),
+        Index("ix_skills_class_creator", "class_id", "creator_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=SkillState.ACTIVE.value,
+        server_default=SkillState.ACTIVE.value,
+    )
+    current_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("skill_revisions.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SkillRevision(Base):
+    __tablename__ = "skill_revisions"
+    __table_args__ = (
+        UniqueConstraint("skill_id", "revision_number", name="uq_skill_revisions_skill_number"),
+        UniqueConstraint("id", "class_id", "creator_id", name="uq_skill_revisions_identity"),
+        CheckConstraint("revision_number > 0", name="revision_number_positive"),
+        CheckConstraint("skill_type IN ('solution_guidance')", name="type_supported"),
+        ForeignKeyConstraint(
+            ["skill_id", "class_id", "creator_id"],
+            ["skills.id", "skills.class_id", "skills.creator_id"],
+            name="fk_skill_revisions_skill_scope",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    skill_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    creator_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    skill_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AgentSkillBinding(Base):
+    __tablename__ = "agent_skill_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_revision_id", "skill_revision_id", name="uq_agent_skill_bindings_pair"
+        ),
+        ForeignKeyConstraint(
+            ["agent_revision_id", "class_id", "creator_id"],
+            ["agent_revisions.id", "agent_revisions.class_id", "agent_revisions.creator_id"],
+            name="fk_agent_skill_bindings_agent_revision_scope",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["skill_revision_id", "class_id", "creator_id"],
+            ["skill_revisions.id", "skill_revisions.class_id", "skill_revisions.creator_id"],
+            name="fk_agent_skill_bindings_skill_revision_scope",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_revision_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    skill_revision_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    creator_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        UniqueConstraint(
+            "id", "class_id", "student_id", "agent_id", name="uq_conversations_scope_identity"
+        ),
+        ForeignKeyConstraint(
+            ["agent_id", "class_id"],
+            ["agents.id", "agents.class_id"],
+            name="fk_conversations_agent_class",
+            ondelete="RESTRICT",
+        ),
+        Index("ix_conversations_student_active_created", "student_id", "deleted_at", "created_at"),
+        Index("ix_conversations_agent_created", "agent_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "ordinal", name="uq_conversation_messages_ordinal"),
+        UniqueConstraint("id", "class_id", name="uq_conversation_messages_id_class"),
+        CheckConstraint("ordinal > 0", name="ordinal_positive"),
+        CheckConstraint("role IN ('user', 'assistant')", name="role_supported"),
+        CheckConstraint("state IN ('processing', 'completed', 'failed')", name="state_supported"),
+        ForeignKeyConstraint(
+            ["conversation_id", "class_id", "student_id", "agent_id"],
+            [
+                "conversations.id",
+                "conversations.class_id",
+                "conversations.student_id",
+                "conversations.agent_id",
+            ],
+            name="fk_conversation_messages_conversation_scope",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "uq_conversation_messages_processing_assistant",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("role = 'assistant' AND state = 'processing'"),
+            sqlite_where=text("role = 'assistant' AND state = 'processing'"),
+        ),
+        Index("ix_conversation_messages_conversation_ordinal", "conversation_id", "ordinal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    student_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    safe_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    retrieval_mode: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    configuration_updated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    applied_agent_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_revisions.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MessageCitation(Base):
+    __tablename__ = "message_citations"
+    __table_args__ = (
+        UniqueConstraint("message_id", "ordinal", name="uq_message_citations_message_ordinal"),
+        ForeignKeyConstraint(
+            ["message_id", "class_id"],
+            ["conversation_messages.id", "conversation_messages.class_id"],
+            name="fk_message_citations_message_class",
+            ondelete="CASCADE",
+        ),
+        Index("ix_message_citations_class_id", "class_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    material_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("materials.id", ondelete="RESTRICT"), nullable=False
+    )
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("knowledge_chunks.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_title: Mapped[str] = mapped_column(String(300), nullable=False)
+    locator: Mapped[str] = mapped_column(String(300), nullable=False)
+    source_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

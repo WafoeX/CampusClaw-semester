@@ -15,14 +15,21 @@ __pycache__/
 htmlcov/
 
 # Node
+node_modules/
+.vitest/
 frontend/node_modules/
 frontend/dist/
 frontend/coverage/
 frontend/playwright-report/
 frontend/test-results/
 
-# Runtime data
-materials/
+# Isolated API-test generated reports and scratch data
+apitest/reports/
+apitest/artifacts/
+apitest/.runtime/
+
+# Runtime data (root only; nested OpenSpec materials capabilities are source)
+/materials/
 backup/
 artifacts/
 *.log

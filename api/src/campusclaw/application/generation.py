@@ -160,6 +160,23 @@ def parse_model_output(raw: str, evidence: list[EvidenceItem], *, max_chars: int
     return ParsedAnswer(status, answer.strip(), list(citation_ids))
 
 
+def reauthorize_evidence(
+    session: Session,
+    *,
+    class_id: uuid.UUID,
+    evidence: list[EvidenceItem],
+    citation_ids: list[str],
+    repository: KnowledgeRepository,
+) -> None:
+    """Shared final source boundary; history can never supply a current citation."""
+    cited = [item for item in evidence if item.source_id in citation_ids]
+    current = repository.active_chunks(
+        session, class_id=class_id, chunk_ids=[item.chunk.id for item in cited]
+    )
+    if {item.chunk.id for item in cited} != {chunk.id for chunk in current}:
+        raise InvalidGenerationOutput("generation_invalid")
+
+
 def source_response(item: EvidenceItem) -> dict[str, Any]:
     chunk = item.chunk
     return {
@@ -237,11 +254,11 @@ class GroundedAnswerService:
         if parsed.status == "insufficient_evidence":
             return ParsedAnswer(parsed.status, None, []), []
         # Final authorization check prevents a source removed during generation from leaking.
-        current = self.repository.active_chunks(
-            session, class_id=class_id, chunk_ids=[item.chunk.id for item in evidence]
+        reauthorize_evidence(
+            session,
+            class_id=class_id,
+            evidence=evidence,
+            citation_ids=parsed.citation_ids,
+            repository=self.repository,
         )
-        current_ids = {chunk.id for chunk in current}
-        cited_items = [item for item in evidence if item.source_id in parsed.citation_ids]
-        if any(item.chunk.id not in current_ids for item in cited_items):
-            raise InvalidGenerationOutput("generation_invalid")
         return parsed, evidence

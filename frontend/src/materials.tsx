@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth, type Identity } from "./auth";
+import { AgentNavigation } from "./agents";
 
 type Material = {
   id: string;
@@ -216,6 +217,7 @@ export function MaterialsLibrary() {
   return (
     <main className="page-shell">
       <LibraryHeader identity={identity} logout={logout} />
+      <AgentNavigation />
       <section className="library-panel" aria-labelledby="library-heading">
         <div className="section-heading">
           <div>

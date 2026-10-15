@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, LoginPage, ProtectedRoute } from "./auth";
 import { MaterialsLibrary, UploadPage } from "./materials";
+import { AgentManagement } from "./agents";
+import { ConversationHome, ConversationPage, CreatorAuditPage } from "./conversations";
 
 export function App() {
   return (
@@ -9,6 +11,11 @@ export function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/materials/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
         <Route path="/materials" element={<ProtectedRoute><MaterialsLibrary /></ProtectedRoute>} />
+        <Route path="/agents/manage" element={<ProtectedRoute><AgentManagement /></ProtectedRoute>} />
+        <Route path="/conversations" element={<ProtectedRoute><ConversationHome /></ProtectedRoute>} />
+        <Route path="/conversations/:conversationId" element={<ProtectedRoute><ConversationPage /></ProtectedRoute>} />
+        <Route path="/agents/:agentId/audit" element={<ProtectedRoute><CreatorAuditPage /></ProtectedRoute>} />
+        <Route path="/agents/:agentId/audit/:conversationId" element={<ProtectedRoute><CreatorAuditPage /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/materials" replace />} />
       </Routes>
     </AuthProvider>
