@@ -410,6 +410,12 @@ class SkillRevision(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     skill_type: Mapped[str] = mapped_column(String(40), nullable=False)
     instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    tools: Mapped[list[Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: ["knowledge_search"],
+        server_default=text("'[\"knowledge_search\"]'"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -518,6 +524,9 @@ class ConversationMessage(Base):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     safe_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     retrieval_mode: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    tool_calls: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default=text("'[]'")
+    )
     configuration_updated: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
@@ -559,6 +568,119 @@ class MessageCitation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class McpServer(Base):
+    __tablename__ = "mcp_servers"
+    __table_args__ = (
+        UniqueConstraint("class_id", "name", name="uq_mcp_servers_class_name"),
+        UniqueConstraint("id", "class_id", name="uq_mcp_servers_id_class"),
+        CheckConstraint(
+            "state IN ('disconnected', 'connecting', 'connected', 'error')",
+            name="state_supported",
+        ),
+        CheckConstraint("connection_generation >= 0", name="generation_nonnegative"),
+        Index("ix_mcp_servers_class_created_id", "class_id", "created_at", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(63), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="disconnected", server_default="disconnected"
+    )
+    connection_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    safe_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class McpDiscoveredTool(Base):
+    __tablename__ = "mcp_discovered_tools"
+    __table_args__ = (
+        UniqueConstraint("server_id", "generation", "name", name="uq_mcp_tools_generation_name"),
+        ForeignKeyConstraint(
+            ["server_id", "class_id"],
+            ["mcp_servers.id", "mcp_servers.class_id"],
+            name="fk_mcp_tools_server_class",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("generation >= 0", name="generation_nonnegative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    server_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(String(1000), nullable=False)
+    input_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class McpToolCall(Base):
+    __tablename__ = "mcp_tool_calls"
+    __table_args__ = (
+        UniqueConstraint("assistant_message_id", "tool_ref", name="uq_mcp_calls_message_ref"),
+        ForeignKeyConstraint(
+            ["server_id", "class_id"],
+            ["mcp_servers.id", "mcp_servers.class_id"],
+            name="fk_mcp_calls_server_class",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["assistant_message_id", "class_id"],
+            ["conversation_messages.id", "conversation_messages.class_id"],
+            name="fk_mcp_calls_message_class",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "execution_state IN ('pending', 'finalized')", name="execution_state_supported"
+        ),
+        CheckConstraint(
+            "(execution_state = 'pending' AND status IS NULL AND code IS NULL "
+            "AND completed_at IS NULL) OR (execution_state = 'finalized' "
+            "AND status IS NOT NULL AND status IN ('ok', 'denied', 'error') AND code IS NOT NULL "
+            "AND completed_at IS NOT NULL)",
+            name="terminal_consistent",
+        ),
+        Index("ix_mcp_calls_class_created_id", "class_id", "created_at", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="RESTRICT"), nullable=False
+    )
+    assistant_message_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    server_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    tool_ref: Mapped[str] = mapped_column(String(264), nullable=False)
+    generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    execution_state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MaterialIndexJob(Base):

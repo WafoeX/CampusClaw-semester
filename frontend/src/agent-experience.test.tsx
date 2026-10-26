@@ -18,6 +18,7 @@ function mount(path: string, role: "teacher" | "student", handler: Handler = () 
     if (override) return override;
     if (pathname === "/api/agents") return json(role === "teacher" ? [agent] : [{ id: agent.id, name: agent.name, description: agent.description }]);
     if (pathname === "/api/skills") return json([skill]);
+    if (pathname === "/api/mcp/servers") return json({ items: [], next_cursor: null });
     if (pathname === "/api/conversations") return json([conversation]);
     if (pathname === `/api/conversations/${ids.conversation}`) return json(conversation);
     if (pathname === "/api/materials") return json([]);
@@ -207,7 +208,7 @@ describe("accessible grounded chat", () => {
   it("shows a safe post-start error without fabricated text", async () => {
     const start = events()[0];
     const { user } = mount(`/conversations/${ids.conversation}`, "student", path => {
-      if (path.endsWith("/messages")) return new Response(stream(frames([start, { name: "message.error", data: { conversation_id: ids.conversation, user_message_id: ids.user, assistant_message_id: ids.assistant, sequence: 2, code: "generation_failed", retryable: true } }])), { headers: { "content-type": "text/event-stream" } });
+      if (path.endsWith("/messages")) return new Response(stream(frames([start, { name: "message.error", data: { conversation_id: ids.conversation, user_message_id: ids.user, assistant_message_id: ids.assistant, sequence: 2, code: "generation_failed", retryable: true, meta: { tool_calls: [] } } }])), { headers: { "content-type": "text/event-stream" } });
     });
     await screen.findByText("已刷新服务器记录。"); await user.type(screen.getByLabelText("当前问题"), "问题"); await user.click(screen.getByRole("button", { name: "发送消息" }));
     expect(await screen.findByText(/本轮生成失败，未提供回答/)).toBeInTheDocument();

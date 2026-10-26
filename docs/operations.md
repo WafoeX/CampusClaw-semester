@@ -13,13 +13,14 @@ Compose 服务栈包含：
 * `db`：运行在内部数据网络中的 PostgreSQL 16。其端口不会发布到主机。
 * `qdrant`：内部、可重建的向量索引，仅保存浮点向量和 PostgreSQL chunk ID/class/material/version 标识；无主机端口。
 * `indexer`：内部 durable worker，读取材料卷并写 PostgreSQL/Qdrant；无主机端口。
+* `mcp-demo`：同仓构建的只读 MCP HTTP 演示服务，仅内部 `data` 网络 8090，无数据库/材料卷或主机端口，不是 API 启动硬健康依赖。
 
 网关会将同源的 `/api/*` 和 `/health` 请求代理至 `api:8000`。因此，API 和数据库均属于 Compose 内部服务，而不是独立暴露在主机上的端点。`postgres-data` 用于存储关系型数据，`materials-data` 用于存储上传的文件，`qdrant-data` 用于可选的向量快照。PostgreSQL 是 chunk 正文、来源、生命周期和授权的唯一权威存储。
 
 可以通过以下命令检查这一服务边界：
 
 ```sh
-docker compose config --format json
+docker compose --env-file .env config --quiet
 
 python tests/test_compose_ports.py
 ```
@@ -57,7 +58,7 @@ JWT_SIGNING_KEY=<at-least-32-random-bytes>
 演示环境配置默认启用具有幂等性的示例数据初始化。请通过 `.env` 提供全部四个示例账户的密码，然后启动服务栈：
 
 ```sh
-docker compose --env-file .env up -d --build db migrate seed api web
+docker compose --env-file .env up -d --build db migrate seed api web mcp-demo
 
 docker compose --env-file .env ps
 ```
@@ -141,6 +142,70 @@ docker compose --env-file .env run --rm --entrypoint campusclaw api qdrant-snaps
 
 更换嵌入模型、维度或距离时必须新建兼容 collection 并从 PostgreSQL authoritative chunks 完整执行 `vector-rebuild`；Qdrant snapshot 只用于加速恢复，不替代 PostgreSQL/materials 协调备份。恢复后运行 `reconcile-vectors`，验证同 ID、class/material/version payload、active ready chunk hydration，并删除 orphan/incompatible points。生成模型或 prompt 版本变化不需要重建向量，但必须重新通过结构化输出、引用、拒答和提示注入验收。
 
+## MCP 运行时配置与只读演示服务
+
+`mcp-server/` 是独立 Python 服务，主 Compose 以 `mcp-demo` 构建，
+Base URL 为 `http://mcp-demo:8090`。只加入内部 `data` 网络，不发布主机端口，
+不挂数据库/材料卷，也不是 API 启动的硬依赖。其不可用不应阻止旧材料和问答路径启动。
+
+部署者在本机 `.env` 中手动填写强随机 `MCP_AUTH_TOKEN`；API 与 MCP 共享该运行时值。
+不要把令牌放在 build arg、Dockerfile ENV、前端或 Swagger 表单中；不要打印环境变量、
+完整 Compose config、带授权的 curl/HAR。缺失/空白值令 MCP 拒绝启动，但 API 可继续运行。
+`MCP_APPROVED_SERVERS` 是 JSON 的 origin→环境变量**名称**映射，默认：
+`{"http://mcp-demo:8090":"MCP_AUTH_TOKEN"}`。它不是令牌值，也不授予浏览器配置密钥的权限。
+URL 仅接受批准的 HTTP(S) origin，不得含用户信息、路径、query 或 fragment；
+主机固定追加 `/mcp`，禁重定向、禁环境代理、无工具重试。
+
+```sh
+docker compose --env-file .env build mcp-demo
+docker compose --env-file .env up -d mcp-demo
+```
+
+本服务仅提供协议 `2024-11-05` 的 POST JSON-RPC 子集：initialize、
+notifications/initialized（202 空正文）、tools/list、tools/call；不支持 batch、
+GET SSE、stdio、订阅、OAuth 或通用 MCP SDK 互操作保证。公开 `/health` 不调用模型；
+所有 `/mcp` 请求（含通知）必须携带服务端 Bearer 令牌，非 JSON 返回 415，
+超过 64 KiB 请求返回 413。
+
+两工具均只接受 `{"question":"..."}`（1–2000 字符，无额外字段），输出最多 4000 字符：
+`formula_hint` 仅提示欧姆定律、牛顿第二定律的适用条件与检查点；
+`unit_convert` 使用固定模板“将 100 cm 转换为 m”，只支持同维度的
+mm/cm/m/km、mg/g/kg、s/min/h，不执行表达式。未知主题/不支持换算返回 isError，
+不编造结果。工具结果不是课程资料证据，不能独立支撑最终答案。
+
+独立协议测试：`cd mcp-server && uv sync --frozen && uv run pytest`；
+镜像验收另设 `MCP_TEST_IMAGE` 为已构建镜像，测试只创建和清理自己的无网络临时容器。
+不要把协议测试当作主机/真实联网集成验收的替代；实际已执行的分层结果见 [MCP 验收记录](mcp-acceptance.md)。
+
+### 教师使用与调用边界
+
+1. 教师进入“本班 MCP”，登记 `campus-tools` 和 `http://mcp-demo:8090`，再连接发现工具。名称/URL 登记后不可修改；同班名称唯一，班级来自登录身份。学生不能管理，跨班服务器按不存在返回 404。
+2. 技能编辑器选择 `formula_hint@campus-tools` 或 `unit_convert@campus-tools` 并保存；修改技能会生成不可变修订并使相关智能体回到草稿，须重新发布。不可用旧绑定保留并标注，保存返回 409，不静默丢失。
+3. 创建省略 `tools` 默认 `knowledge_search`；更新省略保留旧绑定，显式 `[]` 清除 MCP 绑定但不关闭强制本班检索。列表最多 8 项，智能体合并 MCP 引用最多 8 项；不是模型自主路由，全部有效绑定每轮尝试一次，去重排序，无 tools/call 自动重试。
+4. MCP 只收到当前问题前 2000 字符，不含历史、资料、账户身份或用户 JWT。单次 RPC 上限 3 秒，连接全程 8 秒，工具阶段 10 秒；工具辅助正文合计 8000 字符，仅进入独立不可信用户数据段。故障不单独阻断普通资料回答，无资料仍精确拒答。
+5. completed/error 均有 `meta.tool_calls`，历史 assistant 保存相同 `{tool_ref,status,code}`；无工具为空列表。工具 `ok` 不代表答案有证据或模型质量达标。教师“本班工具审计”仅含安全引用、状态/原因、发起用户、时间及会话/turn 标识，不扩大创建者会话正文权限；`GET /api/mcp/audits` 的 limit 为 1–100、cursor 分页。
+6. 断开清空发现并作废代次，旧技能继续使用时明确 denied。已派发请求不能远程撤回；断开先于接收事务提交的迟到文本被丢弃，已提交的 ok 不追溯改写。pending 在取消/恢复时只终结一次，不重放远端调用，不承诺分布式 exactly-once。
+
+连接失败统一安全 503，可见 `credential_unavailable`、`remote_unauthorized`、`tool_timeout`、`protocol_error`、`invalid_discovery` 等固定原因。先检查服务/内部网络及部署配置，再重新连接；不要把远端原始错误或凭证粘贴到浏览器。MCP 不可用时可不启动 `mcp-demo`，API 的旧路径仍可启动。
+
+### 授权演示检查与回滚
+
+只在明确获准的演示部署运行下列检查；workflow 模式会创建验收配置/会话并可能触发部署已批准的模型。需要现有 `teacher.alpha` / `student.alpha` 凭据在 seed 运行时环境中可用。脚本不输出令牌、问题、资料或模型正文；结束时断开新增验收服务器并取消发布新增验收智能体，保留历史审计。
+
+```sh
+# api 使用自己的 MCP 运行时令牌验证真实服务 health/401/list/call
+# 必须让 Compose 自动加载本机配置，勿打印完整 config 或环境。
+docker compose --env-file .env exec -T api \
+  python - --protocol < tests/check_mcp_demo.py
+# 临时 seed 容器只通过正常 HTTP 登录和调用，不执行 seed 命令或直接写库
+docker compose --env-file .env run --rm --no-deps -T seed \
+  python - < tests/check_mcp_demo.py
+```
+
+迁移新增 MCP 表、技能工具绑定和 assistant 安全快照，head 为 `20261020_0007`；旧数据回填默认检索与空工具状态。升级前备份数据库，备份放在被忽略、权限受限的 `backups/`，不要把备份当作可公开验收附件。
+
+回滚前先停止接收新 turn，断开 MCP，并将相关技能改为不含 MCP 引用后重新发布或取消发布相关智能体；等待现有监督任务结束并备份数据库，再回滚 API/web 镜像、停止 mcp-demo。默认保留追加表/列与历史审计，不在已有会话/演示数据上直接 Alembic downgrade；可选 downgrade 只在隔离测试验证。不要通过清空数据库或删除卷来回滚本功能。
+
 ## 智能体、技能与多轮聊天
 
 教师可维护多个本班、创建者私有的智能体及技能，发布必须有有效 prompt 和活跃的 `solution_guidance` 绑定。学生目录不含私有 prompt 或技能指令。学生只能使用本班有效发布配置；下架、退休或绑定失效立即阻止新会话及旧会话发言。配置更新创建不可变修订，后续消息使用最新有效发布修订并显示配置更新提示，历史保留原应用版本。
@@ -177,7 +242,7 @@ docker compose --env-file .env run --rm --entrypoint campusclaw api qdrant-snaps
 
 ## OpenAPI 与隔离接口验收
 
-同源公开路径 `/api/docs`、`/api/openapi.json` 和 `/api/docs-assets/` 通过现有 Web 网关访问；无需给 API 映射宿主端口。Swagger 先用登录 Try it out 取得 token，再在 Authorize 中只填写 token（不要再加 Bearer 前缀），保护接口以同一 principal 运行且只有一个 Bearer 头。不要共享授权后的截图、curl、HAR 或浏览器存储；使用完清除授权。公开文档不含运行时用户、prompt 或秘密。
+同源公开路径 `/api/docs`、`/api/openapi.json` 和 `/api/docs/assets/` 通过现有 Web 网关访问；无需给 API 映射宿主端口。Swagger 先用登录 Try it out 取得 token，再在 Authorize 中只填写 token（不要再加 Bearer 前缀），保护接口以同一 principal 运行且只有一个 Bearer 头。不要共享授权后的截图、curl、HAR 或浏览器存储；使用完清除授权。公开文档不含运行时用户、prompt 或秘密。
 
 隔离测试只使用合成账户/资料和内部确定性模型替身，不能合并开发 Compose 配置，也不能连接已有数据库。从仓库根运行：
 
@@ -194,7 +259,7 @@ docker compose -f docker-compose.apitest.yml down --volumes
 
 项目名 `campusclaw-apitest`；仅声明 loopback `127.0.0.1:18088` 网关端口，三个测试卷、internal-only 网络，无 DB/API 主机端口或外网默认路由。某些 Docker Desktop 版本不绑定 internal-only 网络的主机端口；内部 runner 不受影响，浏览器补验和受限短生命周期桥接说明见 [apitest 指南](../apitest/README.md)。不要为此把数据库或 API 发布到主机或给替身开外网。
 
-runner 按 URL/方法发现 23 个脚本，以只读、限时、限行 reader 对照 PostgreSQL，成功退出 0；任何失败/空套件退出非零并生成脱敏 HTML。报告默认 `apitest/reports/<timestamp>.html`，与 artifacts/runtime 数据一起被 Git 忽略，不得提交。完整启动、支持自测、无效输出/503 分支及真实 Swagger 浏览器补验命令见上述指南；替身通过不等于真实模型质量评估。
+runner 按 URL/方法发现 29 个脚本，以只读、限时、限行 reader 对照 PostgreSQL，成功退出 0；任何失败/空套件退出非零并生成脱敏 HTML。报告默认 `apitest/reports/<timestamp>.html`，与 artifacts/runtime 数据一起被 Git 忽略，不得提交。完整启动、支持自测、无效输出/503 分支及真实 Swagger 浏览器补验命令见上述指南；替身通过不等于真实模型质量评估。
 
 ## 数据库迁移与健康检查
 
@@ -210,7 +275,7 @@ API 依赖数据库迁移和种子数据初始化成功完成后才能启动。
 
 * 是否能够完成一次数据库往返访问和 retrieval schema 迁移检查；
 * 教学资料存储位置是否可写；
-* retrieval schema、indexer freshness/queue、Qdrant 配置，以及 embedding/generation 是否已配置或处于 degraded。
+* 返回检索 schema 就绪标识及 Qdrant、embedding/generation 配置状态；不把这些字段当作索引 freshness/queue、Qdrant 网络或模型可用性的实际探测。
 
 health 不会调用模型、不发送真实问题或资料，也不返回凭据、请求头、prompt、正文或 provider 原始错误。模型/Qdrant degraded 不会让普通资料列表、元数据或下载不可用。
 
@@ -381,7 +446,7 @@ python tests/check_backup_restore.py
 * 不提供 OCR、Office 文档解析、图片/音频/视频转写、恶意软件扫描、内容执行或内联渲染功能。
 * 支持有界持久化多轮引导聊天，但不提供自主 Agent 规划、模型工具调用、模型选择班级范围、跨会话记忆或无限历史。
 * 不提供作业提交、学情诊断、教案/命题生成、教学资料编辑、删除、版本管理、分享链接或用户注册功能。
-* 支持创建者维护的解题引导技能与多个独立智能体；不提供密码找回、外部身份提供商、账户管理界面、任意可执行技能/工具、MCP、多智能体协作或知识图谱。
+* 支持创建者维护的解题引导技能与多个独立智能体；不提供密码找回、外部身份提供商、账户管理界面、任意可执行技能/工具、任意外网/完整 MCP 传输或 OAuth、写操作工具、多智能体协作或知识图谱。
 * 每个账户只能属于一个班级，并且教师只能访问其所属班级。
 
 以上内容均属于明确规定的本学期非目标，而不是未公开的待办功能。

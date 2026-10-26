@@ -3,12 +3,13 @@ from datetime import datetime
 from typing import Any
 
 from apitest.clients import Context, parse_sse
-from apitest.scenarios import AGENT, MISSING, REFUSAL, SKILL, Scenario
+from apitest.mcp_scenarios import McpScenario
+from apitest.scenarios import AGENT, MISSING, REFUSAL, SKILL
 from apitest.support import Checks, Operation
 
 
 def run(context: Context, checks: Checks) -> None:
-    s = Scenario(context, checks)
+    s = McpScenario(context, checks)
     conversation, agent = s.conversation()
     identifier = conversation["id"]
     path = f"/api/conversations/{identifier}/messages"
@@ -22,6 +23,10 @@ def run(context: Context, checks: Checks) -> None:
             and len(s.messages(identifier)) == 2,
             "stream.terminal",
         )
+        server, _, bound = s.bound_conversation()
+        with_tools = s.stream(bound["id"], "ALPHA_FERN 欧姆定律", expected="message.error")
+        s.verify_tool_turn(with_tools, server, "ok", "ok")
+        checks.require(with_tools[-1]["data"]["code"] == failure, "stream.terminal")
         return
     invalid: list[dict[str, Any]] = [{"content": " "}, {"content": "x" * 8001}]
     invalid.extend(
@@ -168,6 +173,34 @@ def run(context: Context, checks: Checks) -> None:
     terminal = events[-1]["data"]
     checks.require(
         datetime.fromisoformat(terminal["completed_at"]).tzinfo is not None, "stream.terminal"
+    )
+    checks.require(terminal["meta"]["tool_calls"] == [], "stream.tool_calls")
+    server, bound_skill, bound = s.bound_conversation()
+    successful = s.stream(bound["id"], "ALPHA_FERN 欧姆定律")
+    s.verify_tool_turn(successful, server, "ok", "ok")
+    checks.require(successful[-1]["data"]["status"] == "answered", "stream.answer")
+    s.call("POST", f"/api/mcp/servers/{server['id']}/disconnect")
+    s.discovery({**server, "state": "disconnected"})
+    s.call(
+        "PATCH",
+        f"/api/skills/{bound_skill['id']}",
+        body={**SKILL, "tools": bound_skill["tools"]},
+        status=409,
+        code="server_disconnected",
+    )
+    denied = s.stream(bound["id"], "ALPHA_FERN 欧姆定律 再检查一次")
+    s.verify_tool_turn(denied, server, "denied", "server_disconnected")
+    s.verify_tool_turn(successful, server, "ok", "ok")
+    checks.require(denied[-1]["data"]["status"] == "answered", "stream.answer")
+    no_material_server, _, no_material = s.bound_conversation()
+    unsupported = s.stream(no_material["id"], "UNINDEXED_ZEBRA 欧姆定律")
+    s.verify_tool_turn(unsupported, no_material_server, "ok", "ok")
+    checks.require(
+        unsupported[-1]["data"]["status"] == "insufficient_evidence"
+        and unsupported[1]["data"]["delta"] == REFUSAL
+        and [event["event"] for event in unsupported]
+        == ["message.started", "answer.delta", "message.completed"],
+        "response.refusal",
     )
 
 

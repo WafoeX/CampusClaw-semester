@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from campusclaw.domain.tool_references import validate_tool_references
+
 
 class LoginRequest(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
@@ -123,6 +125,12 @@ class SkillCreateRequest(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     skill_type: Literal["solution_guidance"]
     instructions: str = Field(min_length=1, max_length=20_000)
+    tools: list[str] = Field(default_factory=lambda: ["knowledge_search"], max_length=8)
+
+    @field_validator("tools")
+    @classmethod
+    def valid_tools(cls, value: list[str]) -> list[str]:
+        return validate_tool_references(value)
 
     @field_validator("name", "instructions")
     @classmethod
@@ -159,6 +167,7 @@ class SkillResponse(StrictModel):
     name: str
     skill_type: Literal["solution_guidance"]
     instructions: str
+    tools: list[str] = Field(default_factory=lambda: ["knowledge_search"], max_length=8)
     current_revision_id: uuid.UUID | None
 
 
@@ -185,6 +194,16 @@ class ConversationMessageRequest(StrictModel):
         return value
 
 
+class ToolCallStatus(StrictModel):
+    tool_ref: str = Field(min_length=1, max_length=264)
+    status: Literal["ok", "denied", "error"]
+    code: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
+
+
+class ToolCallMeta(StrictModel):
+    tool_calls: list[ToolCallStatus] = Field(default_factory=list)
+
+
 class ConversationMessageResponse(StrictModel):
     id: uuid.UUID
     ordinal: int
@@ -198,6 +217,7 @@ class ConversationMessageResponse(StrictModel):
     created_at: datetime
     completed_at: datetime | None = None
     citations: list[CitationSource] = Field(default_factory=list, max_length=100)
+    tool_calls: list[ToolCallStatus] = Field(default_factory=list)
 
 
 class ConversationResponse(StrictModel):

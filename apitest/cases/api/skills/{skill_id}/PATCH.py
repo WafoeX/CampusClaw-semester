@@ -1,10 +1,11 @@
 from apitest.clients import Context
-from apitest.scenarios import MISSING, SKILL, Scenario
+from apitest.mcp_scenarios import McpScenario
+from apitest.scenarios import MISSING, SKILL
 from apitest.support import Checks, Operation
 
 
 def run(context: Context, checks: Checks) -> None:
-    s = Scenario(context, checks)
+    s = McpScenario(context, checks)
     agent = s.agent(published=True)
     identifier = agent["skill_ids"][0]
     path = f"/api/skills/{identifier}"
@@ -41,6 +42,19 @@ def run(context: Context, checks: Checks) -> None:
         and changed["current_revision_id"] != agent["current_revision_id"],
         "database.bindings",
     )
+    server = s.server(connected=True)
+    reference = f"formula_hint@{server['name']}"
+    bound = s.call("PATCH", path, body={**SKILL, "tools": [reference]})
+    preserved = s.call("PATCH", path, body={**SKILL, "instructions": "旧客户端仍保留工具绑定。"})
+    checks.require(bound["tools"] == preserved["tools"] == [reference], "database.bindings")
+    s.call("POST", f"/api/mcp/servers/{server['id']}/disconnect")
+    before_reject = s.skill_rows(identifier)
+    s.call(
+        "PATCH", path, body={**SKILL, "tools": [reference]}, status=409, code="server_disconnected"
+    )
+    checks.require(s.skill_rows(identifier) == before_reject, "database.unchanged")
+    cleared = s.call("PATCH", path, body={**SKILL, "tools": []})
+    checks.require(cleared["tools"] == [], "database.bindings")
 
 
 OPERATION = Operation("PATCH", "/api/skills/{skill_id}", run)

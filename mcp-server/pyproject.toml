@@ -1,0 +1,27 @@
+[project]
+name = "campusclaw-mcp-demo"
+version = "0.1.0"
+description = "Bounded read-only classroom MCP HTTP JSON-RPC subset"
+requires-python = ">=3.12,<3.13"
+dependencies = ["fastapi==0.116.2", "uvicorn==0.35.0"]
+
+[dependency-groups]
+dev = ["httpx==0.28.1", "pytest==8.4.2", "ruff==0.12.12"]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/campusclaw_mcp"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]

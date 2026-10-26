@@ -56,6 +56,28 @@ class StackChecks(unittest.TestCase):
             self.database.connection.execute("DELETE FROM agents WHERE false")
         self.assertEqual(self.database.rows("SELECT 1 AS n")[0]["n"], 1)
 
+    def test_mcp_reader_has_only_safe_columns_and_no_writes(self) -> None:
+        permissions = self.database.rows(
+            "SELECT has_table_privilege(current_user, 'mcp_tool_calls', 'INSERT') AS inserts, "
+            "has_table_privilege(current_user, 'mcp_servers', 'UPDATE') AS updates, "
+            "has_column_privilege(current_user, 'mcp_discovered_tools', 'description', 'SELECT') "
+            "AS raw_description, "
+            "has_column_privilege(current_user, 'mcp_discovered_tools', 'input_schema', 'SELECT') "
+            "AS raw_schema, "
+            "has_column_privilege(current_user, 'users', 'password_hash', 'SELECT') AS password"
+        )[0]
+        self.assertFalse(any(permissions.values()))
+        self.assertEqual(
+            self.database.rows(
+                "SELECT count(*) AS n FROM mcp_tool_calls WHERE execution_state = %s", ("pending",)
+            )[0]["n"],
+            0,
+        )
+        with self.assertRaises(psycopg.Error), self.database.connection.transaction():
+            self.database.connection.execute("SELECT input_schema FROM mcp_discovered_tools")
+        with self.assertRaises(psycopg.Error), self.database.connection.transaction():
+            self.database.connection.execute("DELETE FROM mcp_tool_calls WHERE false")
+
     def test_gateway_login_json_and_deterministic_provider_flow(self) -> None:
         status, health = self.client.json("GET", "/health")
         self.assertEqual(status, 200)
@@ -152,9 +174,64 @@ class StackChecks(unittest.TestCase):
             1,
         )
 
+    def test_actual_mcp_service_is_isolated_and_deterministic(self) -> None:
+        with httpx.Client(
+            base_url="http://mcp-demo:8090", trust_env=False, follow_redirects=False
+        ) as client:
+            self.assertEqual(client.get("/health").status_code, 200)
+            request: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "id": "stack",
+                "method": "tools/list",
+                "params": {},
+            }
+            self.assertEqual(client.post("/mcp", json=request).status_code, 401)
+            client.headers["Authorization"] = "Bearer apitest-only-mcp-runtime-not-for-deployment"
+            initialized = client.post(
+                "/mcp",
+                json={
+                    **request,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "isolated-stack-check", "version": "1"},
+                    },
+                },
+            )
+            self.assertEqual(initialized.status_code, 200)
+            self.assertEqual(initialized.json()["result"]["protocolVersion"], "2024-11-05")
+            self.assertEqual(
+                client.post(
+                    "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
+                ).status_code,
+                202,
+            )
+            response = client.post("/mcp", json=request)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                {tool["name"] for tool in response.json()["result"]["tools"]},
+                {"formula_hint", "unit_convert"},
+            )
+            converted = client.post(
+                "/mcp",
+                json={
+                    **request,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "unit_convert",
+                        "arguments": {"question": "将 100 cm 转换为 m"},
+                    },
+                },
+            )
+            self.assertEqual(converted.status_code, 200)
+            result = converted.json()["result"]
+            self.assertFalse(result.get("isError", False))
+            self.assertIn("1 m", result["content"][0]["text"])
+
     def test_internal_only_provider_no_default_egress(self) -> None:
         # A network-isolation check, not an external model request; sends no app data.
-        for service in ("db", "api", "gateway", "provider-stub", "qdrant"):
+        for service in ("db", "api", "gateway", "provider-stub", "qdrant", "mcp-demo"):
             self.assertTrue(socket.gethostbyname(service))
         parsed = urlsplit("http://provider-stub:8000/v1")
         with httpx.Client(trust_env=False) as client:

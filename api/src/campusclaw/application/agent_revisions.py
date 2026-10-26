@@ -2,10 +2,12 @@
 """Immutable agent and skill configuration revisions."""
 
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from campusclaw.application.tool_bindings import ensure_tool_union
 from campusclaw.domain.models import (
     Agent,
     AgentRevision,
@@ -60,6 +62,7 @@ def create_skill_revision(
     name: str,
     skill_type: str,
     instructions: str,
+    tools: list[Any] | None = None,
 ) -> SkillRevision:
     revision = SkillRevision(
         skill_id=skill.id,
@@ -69,6 +72,7 @@ def create_skill_revision(
         name=name,
         skill_type=skill_type,
         instructions=instructions,
+        tools=tools if tools is not None else ["knowledge_search"],
     )
     session.add(revision)
     session.flush()
@@ -108,6 +112,14 @@ def propagate_skill_revision(
         current = latest_agent_revision(session, agent)
         if current is None:
             continue
+        bound = list(
+            session.scalars(
+                select(SkillRevision)
+                .join(AgentSkillBinding, AgentSkillBinding.skill_revision_id == SkillRevision.id)
+                .where(AgentSkillBinding.agent_revision_id == current.id)
+            )
+        )
+        ensure_tool_union([replacement if item.id == previous.id else item for item in bound])
         copied = create_agent_revision(
             session,
             agent,

@@ -1,3 +1,17 @@
+export type McpServer = {
+  id: string; name: string; base_url: string;
+  state: "disconnected" | "connecting" | "connected" | "error";
+  connection_generation: number; safe_error_code: string | null; tool_count: number;
+  created_at: string; updated_at: string;
+};
+export type McpTool = { name: string; tool_ref: string; description: string; input_schema: Record<string, unknown>; supported: boolean; code: string | null };
+export type McpPage<T> = { items: T[]; next_cursor: string | null };
+export type ToolCall = { tool_ref: string; status: "ok" | "denied" | "error"; code: string };
+export type ToolMeta = { tool_calls: ToolCall[] };
+export type McpAudit = ToolCall & {
+  id: string; server_id: string | null; user_id: string; conversation_id: string;
+  assistant_message_id: string; created_at: string; completed_at: string;
+};
 export type CatalogAgent = { id: string; name: string; description: string | null };
 export type AgentInput = { name: string; description: string | null; system_prompt: string; skill_ids: string[] };
 export type Agent = CatalogAgent & AgentInput & {
@@ -5,8 +19,8 @@ export type Agent = CatalogAgent & AgentInput & {
   current_revision_id: string | null;
   published_revision_id: string | null;
 };
-export type SkillInput = { name: string; skill_type: "solution_guidance"; instructions: string };
-export type Skill = SkillInput & { id: string; state: "active" | "retired"; current_revision_id: string | null };
+export type SkillInput = { name: string; skill_type: "solution_guidance"; instructions: string; tools?: string[] };
+export type Skill = SkillInput & { id: string; state: "active" | "retired"; current_revision_id: string | null; tools: string[] };
 export type Source = {
   source_id: string; material_id: string; title: string; original_filename: string;
   excerpt: string; page: number | null; line_start: number | null; line_end: number | null;
@@ -17,7 +31,7 @@ export type Message = {
   state: "processing" | "completed" | "failed"; content: string | null;
   safe_error_code: string | null; retrieval_mode: string | null;
   applied_agent_revision_id: string | null; configuration_updated: boolean;
-  created_at: string; completed_at: string | null; citations: Source[];
+  created_at: string; completed_at: string | null; citations: Source[]; tool_calls: ToolCall[];
 };
 export type ConversationSummary = {
   id: string; agent_id: string; agent_name: string; student_id: string; student_account: string;
@@ -32,11 +46,28 @@ export type ChatEvent =
   | { name: "citation"; data: Envelope & { source: Source } }
   | { name: "message.completed"; data: Envelope & Configuration & {
     status: "answered" | "insufficient_evidence"; answer_length: number; answer_sha256: string;
-    requested_mode: "hybrid"; retrieval_mode: "keyword" | "vector" | "hybrid" | "keyword_only"; completed_at: string;
+    requested_mode: "hybrid"; retrieval_mode: "keyword" | "vector" | "hybrid" | "keyword_only"; completed_at: string; meta: ToolMeta;
   } }
-  | { name: "message.error"; data: Envelope & { code: string; retryable: boolean } };
+  | { name: "message.error"; data: Envelope & { code: string; retryable: boolean; meta: ToolMeta } };
 
 function safeApiMessage(status: number, code: string): string {
+  const mcpMessages: Record<string, string> = {
+    credential_unavailable: "请联系部署者配置 MCP 运行时凭证。",
+    remote_unauthorized: "远端认证失败，请联系部署者检查 MCP 凭证。",
+    tool_timeout: "MCP 请求超时，请检查服务后重新连接。",
+    remote_unavailable: "MCP 不可用，请检查内部网络与服务状态。",
+    protocol_error: "MCP 协议无效，请检查远端实现。",
+    response_too_large: "MCP 响应超限，请检查远端实现。",
+    invalid_discovery: "工具发现无效，请检查工具名称与参数 schema。",
+    connection_superseded: "连接已被其他操作替换，请刷新状态。",
+    server_name_conflict: "本班服务器名称已存在。",
+    invalid_server: "服务器名称或 URL 无效，请使用部署者批准的地址。",
+    server_disconnected: "工具服务器已断开，请重新连接或移除绑定后保存。",
+    tool_not_discovered: "工具尚未发现，请重新连接发现或移除绑定后保存。",
+    tool_schema_unsupported: "工具参数不兼容，请移除该绑定后保存。",
+    call_limit_exceeded: "每个技能及智能体合并后的 MCP 工具最多 8 项。",
+  };
+  if (Object.hasOwn(mcpMessages, code)) return mcpMessages[code];
   if (code === "agent_not_ready") return "智能体尚未就绪：请绑定有效的解题引导技能后发布。";
   const messages: Record<number, string> = {
     401: "登录已失效，请重新登录。", 404: "资源不存在或无权访问。",
@@ -54,6 +85,16 @@ const segment = (id: string) => encodeURIComponent(id);
 const record = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
 const text = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
+export function validToolCalls(v: unknown): v is ToolCall[] {
+  return Array.isArray(v) && new Set(v.map(item => record(item) ? item.tool_ref : undefined)).size === v.length
+    && v.every(item => record(item) && Object.keys(item).length === 3
+      && text(item.tool_ref, 264) && item.tool_ref.length > 0
+      && ["ok", "denied", "error"].includes(String(item.status))
+      && typeof item.code === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(item.code));
+}
+function validMeta(v: unknown): v is ToolMeta {
+  return record(v) && Object.keys(v).length === 1 && validToolCalls(v.tool_calls);
+}
 export function validSource(v: unknown): v is Source {
   return record(v) && Object.keys(v).every(k => ["source_id", "material_id", "title", "original_filename", "excerpt", "page", "line_start", "line_end", "section", "action"].includes(k)) && typeof v.source_id === "string" && /^S[1-9][0-9]{0,2}$/.test(v.source_id)
     && uuid(v.material_id) && text(v.title, 1000) && text(v.original_filename, 1000)
@@ -96,8 +137,8 @@ export async function parseChatStream(
     const configurationKeys = ["configuration_revision_id", "configuration_updated"];
     const eventKeys: Record<string, string[]> = {
       "message.started": configurationKeys, "answer.delta": ["delta"], "citation": ["source"],
-      "message.completed": [...configurationKeys, "status", "answer_length", "answer_sha256", "requested_mode", "retrieval_mode", "completed_at"],
-      "message.error": ["code", "retryable"],
+      "message.completed": [...configurationKeys, "status", "answer_length", "answer_sha256", "requested_mode", "retrieval_mode", "completed_at", "meta"],
+      "message.error": ["code", "retryable", "meta"],
     };
     if (!Object.hasOwn(eventKeys, name) || Object.keys(v).some(k => ![...commonKeys, ...eventKeys[name]].includes(k))) throw new InterruptedStream();
     const config = () => uuid(v.configuration_revision_id) && typeof v.configuration_updated === "boolean";
@@ -113,7 +154,7 @@ export async function parseChatStream(
       if (!validSource(v.source) || sources.has(v.source.source_id) || sources.size >= 100) throw new InterruptedStream();
       sources.add(v.source.source_id); phase.value = "sources";
     } else if (name === "message.completed") {
-      if (!config() || v.configuration_revision_id !== ids.configuration_revision_id
+      if (!validMeta(v.meta) || !config() || v.configuration_revision_id !== ids.configuration_revision_id
         || v.configuration_updated !== ids.configuration_updated || !answer
         || v.answer_length !== [...answer].length || typeof v.answer_sha256 !== "string"
         || !/^[a-f0-9]{64}$/.test(v.answer_sha256) || v.requested_mode !== "hybrid"
@@ -128,7 +169,7 @@ export async function parseChatStream(
       if (Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("") !== v.answer_sha256) throw new InterruptedStream();
       phase.value = "done";
     } else if (name === "message.error") {
-      if (answer || sources.size || typeof v.retryable !== "boolean" || !["generation_failed", "generation_invalid", "answer_generation_unavailable", "generation_timeout", "source_unavailable"].includes(String(v.code))) throw new InterruptedStream();
+      if (!validMeta(v.meta) || answer || sources.size || typeof v.retryable !== "boolean" || !["generation_failed", "generation_invalid", "answer_generation_unavailable", "generation_timeout", "source_unavailable"].includes(String(v.code))) throw new InterruptedStream();
       phase.value = "done";
     } else throw new InterruptedStream();
     sequence++;
@@ -173,6 +214,12 @@ export function createAgentApi(auth: { authorizationHeader: () => HeadersInit | 
     return response.json() as Promise<T>;
   }
   return {
+    mcpServers: (cursor?: string) => json<McpPage<McpServer>>(`/mcp/servers?limit=100${cursor ? `&cursor=${segment(cursor)}` : ""}`),
+    registerMcp: (data: { name: string; base_url: string }) => json<McpServer>("/mcp/servers", "POST", data),
+    connectMcp: (id: string) => json<McpServer>(`/mcp/servers/${segment(id)}/connect`, "POST"),
+    disconnectMcp: (id: string) => json<McpServer>(`/mcp/servers/${segment(id)}/disconnect`, "POST"),
+    mcpAudits: (cursor?: string) => json<McpPage<McpAudit>>(`/mcp/audits?limit=100${cursor ? `&cursor=${segment(cursor)}` : ""}`),
+    mcpTools: (id: string) => json<McpTool[]>(`/mcp/servers/${segment(id)}/tools`),
     catalog: () => json<CatalogAgent[]>("/agents"),
     agents: () => json<Agent[]>("/agents"),
     agent: (id: string) => json<Agent>(`/agents/${segment(id)}`),

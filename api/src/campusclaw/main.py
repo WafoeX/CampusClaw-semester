@@ -18,8 +18,10 @@ from campusclaw.api.routes_conversations import router as conversations_router
 from campusclaw.api.routes_health import router as health_router
 from campusclaw.api.routes_knowledge import router as knowledge_router
 from campusclaw.api.routes_materials import router as materials_router
+from campusclaw.api.routes_mcp import router as mcp_router
 from campusclaw.api.routes_skills import router as skills_router
 from campusclaw.application.materials import reconcile_storage
+from campusclaw.application.mcp_execution import recover_pending_mcp
 from campusclaw.application.tokens import TokenService
 from campusclaw.config import Settings, get_settings
 from campusclaw.domain.security import PasswordService
@@ -52,6 +54,8 @@ def create_app(
         # process from serving the public health endpoint.
         with suppress(OSError, ValueError, SQLAlchemyError):
             reconcile_storage(runtime_database, runtime_settings.UPLOAD_ROOT)
+        with suppress(SQLAlchemyError):
+            recover_pending_mcp(runtime_database, runtime_settings)
         try:
             yield
         finally:
@@ -82,7 +86,7 @@ def create_app(
         path = request.url.path
         resource_input = any(
             path == prefix or path.startswith(prefix + "/")
-            for prefix in ("/api/agents", "/api/skills", "/api/conversations")
+            for prefix in ("/api/agents", "/api/skills", "/api/conversations", "/api/mcp")
         )
         return JSONResponse(
             status_code=400 if resource_input else 422,
@@ -92,6 +96,7 @@ def create_app(
     application.include_router(auth_router)
     application.include_router(agents_router)
     application.include_router(skills_router)
+    application.include_router(mcp_router)
     application.include_router(conversations_router)
     application.include_router(materials_router)
     application.include_router(knowledge_router)

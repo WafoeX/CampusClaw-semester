@@ -65,6 +65,13 @@ def postgres_api_fixture(tmp_path: Path) -> Iterator[PostgresApiFixture]:
             assert driver_connection is not None
             driver_connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             driver_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            # Shadow public.alembic_version: metadata-created test fixtures are
+            # intentionally not migrated, even when public holds a real stack.
+            driver_connection.execute(
+                sql.SQL(
+                    "CREATE TABLE {}.alembic_version (version_num VARCHAR(32) PRIMARY KEY)"
+                ).format(sql.Identifier(schema))
+            )
         database = Database(raw_url)
 
         @event.listens_for(database.engine, "connect")

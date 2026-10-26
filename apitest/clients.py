@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, LiteralString, cast
+from typing import Any, LiteralString, TypeGuard, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -148,6 +148,10 @@ class Client:
         self.http.close()
 
 
+def _is_array(value: object) -> TypeGuard[list[Any]]:
+    return isinstance(value, list)
+
+
 def parse_sse_chunks(chunks: Iterable[bytes]) -> list[dict[str, Any]]:
     """Bound streamed bytes before joining; UTF-8 codepoints may span HTTP chunks."""
     data = bytearray()
@@ -195,8 +199,9 @@ def _parse_sse(raw: bytes) -> list[dict[str, Any]]:
             "configuration_revision_id",
             "configuration_updated",
             "completed_at",
+            "meta",
         },
-        "message.error": {"code", "retryable"},
+        "message.error": {"code", "retryable", "meta"},
     }
     for frame in text.split("\n\n")[:-1]:
         lines = [line for line in frame.split("\n") if not line.startswith(":")]
@@ -219,6 +224,33 @@ def _parse_sse(raw: bytes) -> list[dict[str, Any]]:
         body = cast(dict[str, Any], decoded)
         if name not in extra or set(body) != common | extra[name]:
             raise ValueError
+        if name in {"message.completed", "message.error"}:
+            meta = body["meta"]
+            if not isinstance(meta, dict) or set(cast(dict[str, Any], meta)) != {"tool_calls"}:
+                raise ValueError
+            meta = cast(dict[str, Any], meta)
+            calls = meta["tool_calls"]
+            if not _is_array(calls):
+                raise ValueError
+            refs: set[str] = set()
+            for entry in calls:
+                if not isinstance(entry, dict) or set(cast(dict[str, Any], entry)) != {
+                    "tool_ref",
+                    "status",
+                    "code",
+                }:
+                    raise ValueError
+                entry = cast(dict[str, Any], entry)
+                if (
+                    not isinstance(entry["tool_ref"], str)
+                    or not 1 <= len(entry["tool_ref"]) <= 264
+                    or entry["tool_ref"] in refs
+                    or entry["status"] not in {"ok", "denied", "error"}
+                    or not isinstance(entry["code"], str)
+                    or re.fullmatch(r"[a-z][a-z0-9_]{0,79}", entry["code"]) is None
+                ):
+                    raise ValueError
+                refs.add(entry["tool_ref"])
         if type(body["sequence"]) is not int or body["sequence"] != len(events) + 1:
             raise ValueError
         current = tuple(

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from campusclaw.api.dependencies import Principal
 from campusclaw.application.agent_revisions import create_agent_revision, latest_agent_revision
+from campusclaw.application.tool_bindings import ToolBindingConflict, ensure_tool_union
 from campusclaw.config import Settings
 from campusclaw.domain.models import (
     Agent,
@@ -141,6 +142,17 @@ class AgentService:
         )
         if has_guidance is None:
             raise AgentNotReadyError("agent requires an active solution-guidance skill")
+        revisions = list(
+            session.scalars(
+                select(SkillRevision)
+                .join(AgentSkillBinding, AgentSkillBinding.skill_revision_id == SkillRevision.id)
+                .where(AgentSkillBinding.agent_revision_id == revision.id)
+            )
+        )
+        try:
+            ensure_tool_union(revisions)
+        except ToolBindingConflict:
+            raise AgentNotReadyError("agent exceeds the MCP tool limit") from None
         agent.state = AgentState.PUBLISHED.value
         agent.published_revision_id = revision.id
         return agent
@@ -180,6 +192,7 @@ class AgentService:
             if revision is None:
                 raise MissingAgentError()
             revisions.append(revision)
+        ensure_tool_union(revisions)
         return revisions
 
     def _bind(

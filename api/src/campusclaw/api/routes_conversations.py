@@ -28,6 +28,8 @@ from campusclaw.api.schemas import (
     ConversationMessageResponse,
     ConversationResponse,
     DomainErrorResponse,
+    ToolCallMeta,
+    ToolCallStatus,
 )
 from campusclaw.api.sse import (
     AnswerDelta,
@@ -96,6 +98,7 @@ def _message_response(
         retrieval_mode=message.retrieval_mode,
         applied_agent_revision_id=message.applied_agent_revision_id,
         configuration_updated=message.configuration_updated,
+        tool_calls=[ToolCallStatus.model_validate(entry) for entry in message.tool_calls],
         created_at=message.created_at,
         completed_at=message.completed_at,
         citations=[
@@ -359,6 +362,7 @@ async def send_message(
                     sequence=sequence + 1,
                     code=cast(Any, outcome.code),
                     retryable=outcome.retryable,
+                    meta=ToolCallMeta(tool_calls=list(outcome.tool_calls)),
                 ),
             )
             return
@@ -395,6 +399,7 @@ async def send_message(
                 configuration_revision_id=revision_id,
                 configuration_updated=configuration_updated,
                 completed_at=outcome.completed_at,
+                meta=ToolCallMeta(tool_calls=list(outcome.tool_calls)),
             ),
         )
 

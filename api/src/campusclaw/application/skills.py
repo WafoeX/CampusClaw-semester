@@ -1,6 +1,7 @@
 # pyright: basic, reportMissingImports=false
 """Creator-owned skill lifecycle and protected solution-guidance policy."""
 
+import builtins
 import uuid
 
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from campusclaw.application.agent_revisions import (
     latest_skill_revision,
     propagate_skill_revision,
 )
+from campusclaw.application.tool_bindings import reference_list, resolve_bindings
 from campusclaw.config import Settings
 from campusclaw.domain.models import (
     Agent,
@@ -49,9 +51,13 @@ class SkillService:
         name: str,
         skill_type: str,
         instructions: str,
+        tools: list[str] | None = None,
     ) -> Skill:
         self._require_teacher(principal)
         self._validate(name, skill_type, instructions)
+        bindings = resolve_bindings(
+            session, principal.class_id, tools if tools is not None else ["knowledge_search"]
+        )
         skill = Skill(
             id=uuid.uuid4(),
             class_id=principal.class_id,
@@ -66,6 +72,7 @@ class SkillService:
             name=name.strip(),
             skill_type=skill_type,
             instructions=instructions.strip(),
+            tools=bindings,
         )
         return skill
 
@@ -96,6 +103,7 @@ class SkillService:
         name: str,
         skill_type: str,
         instructions: str,
+        tools: builtins.list[str] | None = None,
     ) -> Skill:
         skill = self.read(session, principal, skill_id)
         if skill.state != SkillState.ACTIVE.value:
@@ -104,12 +112,19 @@ class SkillService:
         previous = latest_skill_revision(session, skill)
         if previous is None:
             raise RuntimeError("active skill has no revision")
+        bindings = resolve_bindings(
+            session,
+            principal.class_id,
+            reference_list(previous.tools) if tools is None else tools,
+            previous=previous.tools,
+        )
         replacement = create_skill_revision(
             session,
             skill,
             name=name.strip(),
             skill_type=skill_type,
             instructions=instructions.strip(),
+            tools=bindings,
         )
         propagate_skill_revision(session, previous, replacement)
         return skill

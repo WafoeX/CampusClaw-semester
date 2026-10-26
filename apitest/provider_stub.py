@@ -8,7 +8,8 @@ import json
 import math
 from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 FACTS = {
@@ -49,6 +50,32 @@ def vector(text: str) -> list[float]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/mcp")
+async def controlled_mcp_failure(request: Request) -> Response:
+    """Test-only protocol faults selected by deployment aliases, never question text."""
+    host = request.headers.get("host", "").split(":")[0]
+    if host not in {"mcp-invalid", "mcp-timeout"}:
+        raise HTTPException(404, "fixture_not_found")
+    if request.headers.get("authorization") != (
+        "Bearer apitest-only-mcp-runtime-not-for-deployment"
+    ):
+        raise HTTPException(401, "fixture_unauthorized")
+    if host == "mcp-timeout":
+        await asyncio.sleep(4)
+    payload: dict[str, Any] = await request.json()
+    method = payload.get("method")
+    if method == "notifications/initialized":
+        return Response(status_code=202)
+    result: dict[str, Any] = {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": "controlled-fault", "version": "1"},
+    }
+    if method == "tools/list":
+        result = {"tools": [{"name": "INVALID-NAME", "inputSchema": {"type": "object"}}]}
+    return JSONResponse({"jsonrpc": "2.0", "id": payload.get("id"), "result": result})
 
 
 @app.post("/v1/embeddings")

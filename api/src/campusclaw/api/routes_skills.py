@@ -16,13 +16,18 @@ from campusclaw.api.schemas import (
 )
 from campusclaw.application.agent_revisions import latest_skill_revision
 from campusclaw.application.skills import MissingSkillError, SkillService
+from campusclaw.application.tool_bindings import (
+    MissingToolBinding,
+    ToolBindingConflict,
+    reference_list,
+)
 from campusclaw.config import Settings
 from campusclaw.domain.models import Skill
 
 router = APIRouter(
     prefix="/api/skills",
     tags=["skills"],
-    responses={code: {"model": DomainErrorResponse} for code in (400, 401, 403, 404)},
+    responses={code: {"model": DomainErrorResponse} for code in (400, 401, 403, 404, 409)},
 )
 
 
@@ -44,6 +49,7 @@ def _response(session: Session, skill: Skill) -> SkillResponse:
         name=revision.name,
         skill_type=cast(Literal["solution_guidance"], revision.skill_type),
         instructions=revision.instructions,
+        tools=reference_list(revision.tools),
         current_revision_id=skill.current_revision_id,
     )
 
@@ -72,6 +78,12 @@ def create_skill(
         skill = _service(settings).create(database, principal, **payload.model_dump())
         database.commit()
         return _response(database, skill)
+    except MissingToolBinding:
+        database.rollback()
+        raise _not_found() from None
+    except ToolBindingConflict as error:
+        database.rollback()
+        raise HTTPException(409, detail={"code": error.code, "message": str(error)}) from None
     except ValueError:
         database.rollback()
         raise HTTPException(
@@ -101,12 +113,17 @@ def update_skill(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> SkillResponse:
     try:
-        skill = _service(settings).update(database, principal, skill_id, **payload.model_dump())
+        skill = _service(settings).update(
+            database, principal, skill_id, **payload.model_dump(exclude_unset=True)
+        )
         database.commit()
         return _response(database, skill)
-    except MissingSkillError:
+    except (MissingSkillError, MissingToolBinding):
         database.rollback()
         raise _not_found() from None
+    except ToolBindingConflict as error:
+        database.rollback()
+        raise HTTPException(409, detail={"code": error.code, "message": str(error)}) from None
     except ValueError:
         database.rollback()
         raise HTTPException(

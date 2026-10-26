@@ -1,10 +1,13 @@
 # pyright: basic, reportMissingImports=false
 """Validated server-only configuration."""
 
+import os
+import re
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +22,37 @@ class AppEnvironment(StrEnum):
 
 SecretKey = Annotated[SecretStr, Field(min_length=32)]
 SeedPassword = Annotated[SecretStr, Field(min_length=1)]
+
+
+def normalize_mcp_origin(value: str) -> str:
+    """Parse an origin, never echoing a potentially credential-bearing URL."""
+    try:
+        if not value or any(char.isspace() or ord(char) < 32 for char in value):
+            raise ValueError
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or "?" in value
+            or "#" in value
+            or "\\" in value
+        ):
+            raise ValueError
+        host = parsed.hostname.encode("idna").decode("ascii").lower()
+        if ":" in host:
+            host = f"[{host}]"
+        port = parsed.port
+        suffix = (
+            "" if port is None or port == {"http": 80, "https": 443}[parsed.scheme] else f":{port}"
+        )
+        return f"{parsed.scheme}://{host}{suffix}"
+    except (ValueError, UnicodeError):
+        raise ValueError(
+            "MCP Base URL must be an HTTP(S) origin without credentials or extras"
+        ) from None
 
 
 class Settings(BaseSettings):
@@ -76,6 +110,41 @@ class Settings(BaseSettings):
     GENERATION_STRUCTURED_OUTPUT: bool = True
     GENERATION_PROMPT_VERSION: str = "grounded-v1"
     GENERATION_MAX_RETRIES: Annotated[int, Field(ge=0, le=2)] = 1
+
+    MCP_AUTH_TOKEN: SecretStr | None = Field(default=None, repr=False)
+    MCP_APPROVED_SERVERS: dict[str, str] = Field(
+        default_factory=lambda: {"http://mcp-demo:8090": "MCP_AUTH_TOKEN"}
+    )
+
+    @model_validator(mode="after")
+    def validate_mcp_approved_servers(self) -> "Settings":
+        approved: dict[str, str] = {}
+        for origin, variable in self.MCP_APPROVED_SERVERS.items():
+            normalized = normalize_mcp_origin(origin)
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", variable):
+                raise ValueError("MCP credential mapping requires an environment variable name")
+            if normalized in approved:
+                raise ValueError("MCP approved origins must be unique after normalization")
+            approved[normalized] = variable
+        self.MCP_APPROVED_SERVERS = approved
+        return self
+
+    def approved_mcp_origin(self, value: str) -> str:
+        origin = normalize_mcp_origin(value)
+        if origin not in self.MCP_APPROVED_SERVERS:
+            raise ValueError("MCP server is not deployment-approved")
+        return origin
+
+    def mcp_credential(self, value: str) -> SecretStr | None:
+        """Resolve only a deployment-approved mapping; absence disables MCP, not API."""
+        origin = self.approved_mcp_origin(value)
+        variable = self.MCP_APPROVED_SERVERS[origin]
+        token = (
+            self.MCP_AUTH_TOKEN
+            if variable == "MCP_AUTH_TOKEN"
+            else SecretStr(os.environ.get(variable, ""))
+        )
+        return token if token is not None and token.get_secret_value().strip() else None
 
     QDRANT_URL: str = "http://qdrant:6333"
     QDRANT_API_KEY: SecretStr | None = None

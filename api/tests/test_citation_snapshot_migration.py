@@ -112,6 +112,9 @@ def test_additive_snapshot_upgrade_preserves_existing_data(monkeypatch: pytest.M
             "conversations",
             "conversation_messages",
             "message_citations",
+            "mcp_servers",
+            "mcp_discovered_tools",
+            "mcp_tool_calls",
         }
         with Session(engine) as session:
             user = session.get(User, user_id)
@@ -137,7 +140,7 @@ def test_additive_snapshot_upgrade_preserves_existing_data(monkeypatch: pytest.M
                 connection.scalar(select(Class.name).where(Class.id == class_id))
                 == "Retained class"
             )
-            assert MigrationContext.configure(connection).get_current_revision() == "20261015_0006"
+            assert MigrationContext.configure(connection).get_current_revision() == "20261020_0007"
         notice = next(
             column
             for column in inspect(engine).get_columns("conversation_messages")

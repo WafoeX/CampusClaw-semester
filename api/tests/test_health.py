@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import Column, MetaData, String, Table, insert
@@ -22,7 +23,7 @@ def settings_for(tmp_path: Path, database_url: str) -> Settings:
     )
 
 
-def add_head(engine: Engine) -> None:
+def add_head(engine: Engine, version: str = "20260929_0002") -> None:
     metadata = MetaData()
     versions = Table(
         "alembic_version",
@@ -31,7 +32,7 @@ def add_head(engine: Engine) -> None:
     )
     metadata.create_all(engine)
     with engine.begin() as connection:
-        connection.execute(insert(versions).values(version_num="20260929_0002"))
+        connection.execute(insert(versions).values(version_num=version))
 
 
 def test_health_reports_ready_only_after_database_head_and_storage_are_ready(
@@ -47,6 +48,25 @@ def test_health_reports_ready_only_after_database_head_and_storage_are_ready(
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    database.dispose()
+
+
+@pytest.mark.parametrize("version,expected", [("20261020_0007", 200), ("unknown_head", 503)])
+def test_health_recognizes_mcp_migration_but_not_unknown_heads(
+    tmp_path: Path, version: str, expected: int
+) -> None:
+    url = f"sqlite+pysqlite:///{tmp_path / 'mcp-health.db'}"
+    database = Database(url)
+    Base.metadata.create_all(database.engine)
+    add_head(database.engine, version)
+    settings = settings_for(tmp_path, url)
+    with TestClient(create_app(settings=settings, database=database)) as client:
+        response = client.get("/health")
+    assert response.status_code == expected
+    if expected == 200:
+        assert response.json()["retrieval_schema"] == "ready"
+    else:
+        assert response.json()["detail"] == {"status": "unavailable", "code": "not_ready"}
     database.dispose()
 
 

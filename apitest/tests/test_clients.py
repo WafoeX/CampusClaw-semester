@@ -46,6 +46,7 @@ def stream() -> list[tuple[str, dict[str, Any]]]:
                 "requested_mode": "hybrid",
                 "retrieval_mode": "keyword",
                 "completed_at": "2026-10-15T00:00:00Z",
+                "meta": {"tool_calls": []},
             },
         ),
     ]
@@ -133,11 +134,54 @@ class ClientTests(unittest.TestCase):
             encode(
                 [
                     stream()[0],
-                    ("message.error", {"code": "generation_failed", "retryable": True}),
+                    (
+                        "message.error",
+                        {
+                            "code": "generation_failed",
+                            "retryable": True,
+                            "meta": {"tool_calls": []},
+                        },
+                    ),
                 ]
             )
         )
         self.assertEqual(events[-1]["event"], "message.error")
+
+    def test_tool_metadata_validates_both_terminals_without_raw_results(self) -> None:
+        calls: list[dict[str, Any]] = [
+            {"tool_ref": f"tool{i}@campus-tools", "status": status, "code": code}
+            for i, (status, code) in enumerate(
+                (("ok", "ok"), ("denied", "server_disconnected"), ("error", "tool_timeout"))
+            )
+        ]
+        for failed in (False, True):
+            rows: list[tuple[str, dict[str, Any]]] = (
+                stream()
+                if not failed
+                else [
+                    stream()[0],
+                    ("message.error", {"code": "generation_failed", "retryable": True}),
+                ]
+            )
+            rows[-1][1]["meta"] = {"tool_calls": calls}
+            self.assertEqual(parse_sse(encode(rows))[-1]["data"]["meta"]["tool_calls"], calls)
+            invalid: list[Any] = [
+                None,
+                {},
+                {"tool_calls": None},
+                {"tool_calls": [], "token": "SECRET"},
+                {"tool_calls": [{**calls[0], "raw_result": "SECRET"}]},
+                {"tool_calls": [{**calls[0], "status": "pending"}]},
+                {"tool_calls": [{**calls[0], "code": "Bearer SECRET"}]},
+                {"tool_calls": [calls[0], calls[0]]},
+            ]
+            for meta in invalid:
+                rows[-1][1]["meta"] = meta
+                with self.assertRaisesRegex(ValueError, "^sse_contract_failed$"):
+                    parse_sse(encode(rows))
+            rows[-1][1].pop("meta")
+            with self.assertRaisesRegex(ValueError, "^sse_contract_failed$"):
+                parse_sse(encode(rows))
 
     def test_sse_rejects_interruption_sequence_identity_order_digest_and_secrets(self) -> None:
         variants = [encode(stream())[:-1], b"data: SECRET\n\n", b"\xff\n\n"]

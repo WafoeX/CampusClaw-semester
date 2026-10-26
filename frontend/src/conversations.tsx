@@ -2,7 +2,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "./auth";
 import { AgentNavigation } from "./agents";
-import { ApiError, validSource, type CatalogAgent, type ChatEvent, type Conversation, type ConversationSummary, type Message, type Source } from "./agent-api";
+import { ApiError, validSource, validToolCalls, type CatalogAgent, type ChatEvent, type Conversation, type ConversationSummary, type Message, type Source } from "./agent-api";
 import { useAgentApi } from "./use-agent-api";
 
 const retention = "删除后，创建该智能体的教师仍可审计您的身份、问题、回答和引用；记录按部署保留政策保存，不会立即销毁。";
@@ -79,6 +79,10 @@ function MessageHistory({ messages, onDownload }: { messages: Message[]; onDownl
       {message.configuration_updated && <p className="degraded-notice">智能体配置已更新，本轮使用新配置。</p>}
       {message.state === "failed" ? <p>本轮生成失败，未提供回答。请确认服务器状态后再决定是否发送新问题。</p> : <Answer message={message} />}
       <p className="muted">{message.state === "processing" ? "处理中／等待服务器确认" : message.state === "failed" ? "失败" : "已完成"}</p>
+      {message.role === "assistant" && validToolCalls(message.tool_calls) && message.tool_calls.length > 0 && <section aria-label={`消息 ${message.ordinal} 的工具状态`}>
+        <p>工具执行状态独立于回答质量；工具结果不是事实证据。</p>
+        <ul>{message.tool_calls.map(call => <li key={call.tool_ref}>{call.tool_ref}：{call.status === "ok" ? "成功" : call.status === "denied" ? "已拒绝" : "执行错误"}（{call.code}）</li>)}</ul>
+      </section>}
       {message.applied_agent_revision_id && <p className="muted">配置版本：{message.applied_agent_revision_id}</p>}
       {message.citations.length > 0 && <section aria-label={`消息 ${message.ordinal} 的来源`}>{message.citations.filter(validSource).map(source => <article className="source-card" id={`message-${message.id}-source-${source.source_id}`} key={source.source_id} tabIndex={-1}>
         <h4>{source.source_id} · {source.title}</h4><p>{source.original_filename}</p><p className="plain-text">{source.excerpt}</p>
@@ -178,7 +182,7 @@ function ConversationView({ id, auditAgent }: { id: string; auditAgent?: string 
         setConversation(current => {
           if (!current) return current;
           const ordinal = current.messages.at(-1)?.ordinal ?? 0;
-          const common = { safe_error_code: null, retrieval_mode: null, citations: [], created_at: new Date().toISOString(), completed_at: null };
+          const common = { safe_error_code: null, retrieval_mode: null, citations: [], tool_calls: [], created_at: new Date().toISOString(), completed_at: null };
           return { ...current, messages: [...current.messages,
             { ...common, id: data.user_message_id, ordinal: ordinal + 1, role: "user", state: "completed", content, applied_agent_revision_id: null, configuration_updated: false },
             { ...common, id: data.assistant_message_id, ordinal: ordinal + 2, role: "assistant", state: "processing", content: "", applied_agent_revision_id: event.data.configuration_revision_id, configuration_updated: event.data.configuration_updated },
@@ -189,8 +193,8 @@ function ConversationView({ id, auditAgent }: { id: string; auditAgent?: string 
         setConversation(current => current ? { ...current, messages: current.messages.map(m => {
           if (m.id !== data.assistant_message_id) return m;
           if (event.name === "answer.delta") return { ...m, content: (m.content ?? "") + event.data.delta };
-          if (event.name === "message.completed") return { ...m, state: "completed", citations: [...sources], retrieval_mode: event.data.retrieval_mode, completed_at: event.data.completed_at };
-          if (event.name === "message.error") return { ...m, state: "failed", content: null, citations: [], safe_error_code: event.data.code };
+          if (event.name === "message.completed") return { ...m, state: "completed", tool_calls: event.data.meta.tool_calls, citations: [...sources], retrieval_mode: event.data.retrieval_mode, completed_at: event.data.completed_at };
+          if (event.name === "message.error") return { ...m, state: "failed", tool_calls: event.data.meta.tool_calls, content: null, citations: [], safe_error_code: event.data.code };
           return m;
         }) } : current);
         setStatus(event.name === "answer.delta" ? "正在接收已验证回答…" : event.name === "message.error" ? "生成失败；请刷新服务器记录后决定是否发送新问题。" : "回答已完成。");

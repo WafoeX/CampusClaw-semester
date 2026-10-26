@@ -22,6 +22,9 @@ x-runtime: &runtime
     GENERATION_DATA_BOUNDARY: private
     QDRANT_URL: http://qdrant:6333
     QDRANT_COLLECTION: campusclaw-apitest-v1
+    MCP_AUTH_TOKEN: apitest-only-mcp-runtime-not-for-deployment
+    MCP_APPROVED_SERVERS: >-
+      {"http://mcp-demo:8090":"MCP_AUTH_TOKEN","http://mcp-wrong-token:8090":"MCP_AUTH_TOKEN","http://mcp-invalid:8000":"MCP_AUTH_TOKEN","http://mcp-timeout:8000":"MCP_AUTH_TOKEN"}
     PYTHONPATH: /work:/app/src
   networks: [test]
 
@@ -69,6 +72,9 @@ services:
 
   provider-stub:
     <<: *runtime
+    networks:
+      test:
+        aliases: [mcp-invalid, mcp-timeout]
     command:
       - uvicorn
       - apitest.provider_stub:app
@@ -92,6 +98,42 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  mcp-demo:
+    image: campusclaw-apitest-mcp:local
+    build:
+      context: ./mcp-server
+    # Test-only content-free request lines allow dispatch counting.
+    command:
+      - uvicorn
+      - campusclaw_mcp.main:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    environment:
+      MCP_AUTH_TOKEN: apitest-only-mcp-runtime-not-for-deployment
+    expose: ["8090"]
+    networks: [test]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mcp-wrong-token:
+    image: campusclaw-apitest-mcp:local
+    environment:
+      MCP_AUTH_TOKEN: apitest-deliberately-different-runtime-token
+    expose: ["8090"]
+    networks: [test]
 
   qdrant:
     image: qdrant/qdrant:v1.15.3

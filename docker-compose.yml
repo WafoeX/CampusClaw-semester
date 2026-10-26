@@ -79,6 +79,9 @@ services:
       GENERATION_API_KEY: ${GENERATION_API_KEY:-}
       GENERATION_DATA_BOUNDARY: ${GENERATION_DATA_BOUNDARY:-private}
       GENERATION_MODEL: ${GENERATION_MODEL:-grounded-answer}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_APPROVED_SERVERS: >-
+        ${MCP_APPROVED_SERVERS:-{"http://mcp-demo:8090":"MCP_AUTH_TOKEN"}}
       GENERATION_TEMPERATURE: ${GENERATION_TEMPERATURE:-0}
       GENERATION_TIMEOUT_SECONDS: ${GENERATION_TIMEOUT_SECONDS:-30}
       GENERATION_MAX_RETRIES: ${GENERATION_MAX_RETRIES:-1}
@@ -130,6 +133,28 @@ services:
       timeout: 4s
       retries: 20
       start_period: 5s
+
+  mcp-demo:
+    image: campusclaw-mcp-demo:local
+    build:
+      context: ./mcp-server
+    environment:
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+    expose:
+      - "8090"
+    networks:
+      - data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen("http://127.0.0.1:8090/health", timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   qdrant:
     image: qdrant/qdrant:v1.15.3

@@ -82,6 +82,34 @@ def prepare() -> None:
             session.flush()
             # No access to password hashes, no writes, no schema/database creation.
             session.execute(text("GRANT SELECT ON ALL TABLES IN SCHEMA public TO apitest_reader"))
+            # MCP observation excludes remote descriptions/schema and does not
+            # grant broad table access that could expose future secret columns.
+            session.execute(
+                text(
+                    "REVOKE SELECT ON mcp_servers, mcp_discovered_tools, mcp_tool_calls "
+                    "FROM apitest_reader"
+                )
+            )
+            session.execute(
+                text(
+                    "GRANT SELECT (id, class_id, created_by, name, base_url, state, "
+                    "connection_generation, safe_error_code, created_at, updated_at) "
+                    "ON mcp_servers TO apitest_reader"
+                )
+            )
+            session.execute(
+                text(
+                    "GRANT SELECT (id, server_id, class_id, generation, name) "
+                    "ON mcp_discovered_tools TO apitest_reader"
+                )
+            )
+            session.execute(
+                text(
+                    "GRANT SELECT (id, class_id, user_id, conversation_id, assistant_message_id, "
+                    "server_id, tool_ref, generation, execution_state, status, code, "
+                    "created_at, completed_at) ON mcp_tool_calls TO apitest_reader"
+                )
+            )
             session.execute(text("REVOKE SELECT ON users FROM apitest_reader"))
             session.execute(
                 text(

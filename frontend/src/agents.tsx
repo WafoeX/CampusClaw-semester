@@ -11,7 +11,7 @@ export function AgentNavigation() {
   const { identity } = useAuth();
   return <nav className="agent-navigation" aria-label="班级功能">
     <Link to="/materials">资料与单轮问答</Link>
-    {identity?.role === "teacher" ? <Link to="/agents/manage">我的智能体与技能</Link> : <Link to="/conversations">智能体与会话</Link>}
+    {identity?.role === "teacher" ? <><Link to="/agents/manage">我的智能体与技能</Link><Link to="/mcp">本班 MCP</Link></> : <Link to="/conversations">智能体与会话</Link>}
   </nav>;
 }
 
@@ -24,6 +24,9 @@ function TeacherManagement() {
   const api = useAgentApi();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [availableTools, setAvailableTools] = useState<string[]>([]);
+  const [toolCursor, setToolCursor] = useState<string | null>(null);
+  const [toolWarning, setToolWarning] = useState("");
   const [agentId, setAgentId] = useState<string>();
   const [skillId, setSkillId] = useState<string>();
   const [agent, setAgent] = useState<AgentInput>(blankAgent);
@@ -33,11 +36,24 @@ function TeacherManagement() {
   const [busy, setBusy] = useState(true);
   const agentName = useRef<HTMLInputElement>(null);
   const skillName = useRef<HTMLInputElement>(null);
+  const loadTools = useCallback(async (cursor?: string) => {
+    try {
+      const page = await api.mcpServers(cursor);
+      const lists = await Promise.all(page.items.filter(s => s.state === "connected").map(s => api.mcpTools(s.id)));
+      const refs = lists.flat().filter(t => t.supported).map(t => t.tool_ref);
+      setAvailableTools(current => [...new Set([...(cursor ? current : []), ...refs])].sort());
+      setToolCursor(page.next_cursor); setToolWarning("");
+    } catch {
+      if (!cursor) setAvailableTools([]);
+      setToolWarning("无法加载可用工具；旧绑定已保留，请刷新工具或前往本班 MCP 检查连接。");
+    }
+  }, [api]);
   const load = useCallback(async () => {
     const [a, s] = await Promise.all([api.agents(), api.skills()]);
     setAgents(a.filter(item => item.state !== "retired"));
     setSkills(s.filter(item => item.state === "active"));
-  }, [api]);
+    await loadTools();
+  }, [api, loadTools]);
   useEffect(() => {
     let active = true;
     void load().then(() => { if (active) setStatus("配置已加载，仅显示您创建的资源。"); })
@@ -45,10 +61,10 @@ function TeacherManagement() {
       .finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
   }, [load]);
-  async function operation(work: () => Promise<unknown>, success: string) {
+  async function operation(work: () => Promise<unknown>, success: string, reload = true) {
     if (busy) return;
     setBusy(true); setError("");
-    try { await work(); await load(); setStatus(success); }
+    try { await work(); if (reload) await load(); setStatus(success); }
     catch (e) { setError(e instanceof Error ? e.message : "操作失败。"); }
     finally { setBusy(false); }
   }
@@ -99,7 +115,7 @@ function TeacherManagement() {
       </form>
       <section className="library-panel" aria-labelledby="my-skills"><h2 id="my-skills">我的技能</h2>
         <ul className="agent-list">{skills.map(s => <li key={s.id}><h3>{s.name}</h3><p className="plain-text">{s.instructions}</p>
-          <button disabled={busy} onClick={() => { setSkillId(s.id); setSkill({ name: s.name, skill_type: s.skill_type, instructions: s.instructions }); skillName.current?.focus(); }}>编辑技能 {s.name}</button>
+          <button disabled={busy} onClick={() => { setSkillId(s.id); setSkill({ name: s.name, skill_type: s.skill_type, instructions: s.instructions, tools: [...s.tools] }); skillName.current?.focus(); }}>编辑技能 {s.name}</button>
           <button disabled={busy} onClick={() => { if (window.confirm(`停用技能 ${s.name}？相关智能体可能无法继续使用。`)) void operation(async () => { await api.retireSkill(s.id); if (skillId === s.id) { setSkillId(undefined); setSkill(blankSkill); } setAgent(current => ({ ...current, skill_ids: current.skill_ids.filter(id => id !== s.id) })); }, "技能已停用，请修复相关智能体绑定并重新发布。"); }}>停用技能 {s.name}</button>
         </li>)}</ul>
       </section>
@@ -108,6 +124,19 @@ function TeacherManagement() {
         <label>技能名称<input ref={skillName} required maxLength={120} value={skill.name} onChange={e => setSkill({ ...skill, name: e.target.value })} /></label>
         <label>技能类型<select value={skill.skill_type} onChange={() => undefined}><option value="solution_guidance">解题引导</option></select></label>
         <label>技能指令<textarea required maxLength={20000} rows={5} value={skill.instructions} onChange={e => setSkill({ ...skill, instructions: e.target.value })} /></label>
+        <fieldset><legend>技能工具（最多 8 项；平台始终执行本班检索）</legend>
+          <p>全部有效绑定每轮都会尝试调用，仅向工具发送当前问题前 2000 字符。工具结果不是事实证据，不会递归调用。</p>
+          <p>formula_hint 仅支持有限公式提示；unit_convert 支持有限同维度单位的固定转换模板。</p>
+          {toolWarning && <p role="alert">{toolWarning}</p>}
+          <button type="button" disabled={busy} onClick={() => void operation(() => loadTools(), "工具列表已刷新。", false)}>刷新可选工具</button>
+          {toolCursor && <button type="button" disabled={busy} onClick={() => void operation(() => loadTools(toolCursor), "已加载更多工具。", false)}>加载更多可选工具</button>}
+          {["knowledge_search", ...availableTools, ...(skill.tools ?? []).filter(ref => ref !== "knowledge_search" && !availableTools.includes(ref))].map(ref => <label className="checkbox-label" key={ref}>
+            <input type="checkbox" checked={(skill.tools ?? ["knowledge_search"]).includes(ref)} onChange={e => {
+              const current = skill.tools ?? ["knowledge_search"];
+              setSkill({ ...skill, tools: e.target.checked ? [...current, ref] : current.filter(item => item !== ref) });
+            }} />{ref}{ref !== "knowledge_search" && !availableTools.includes(ref) ? "（不可用；保留绑定，保存时需重新连接发现或移除）" : ""}
+          </label>)}
+        </fieldset>
         <button type="submit" disabled={busy}>保存技能</button>
         <button type="button" disabled={busy} onClick={() => { setSkillId(undefined); setSkill(blankSkill); skillName.current?.focus(); }}>新建技能</button>
       </form>

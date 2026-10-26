@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from campusclaw.api.schemas import CitationSource, StrictModel
+from campusclaw.api.schemas import CitationSource, StrictModel, ToolCallMeta
 
 
 class EventEnvelope(StrictModel):
@@ -38,6 +38,7 @@ class MessageCompleted(EventEnvelope):
     configuration_revision_id: uuid.UUID
     configuration_updated: bool
     completed_at: datetime
+    meta: ToolCallMeta = Field(default_factory=ToolCallMeta)
 
 
 class MessageError(EventEnvelope):
@@ -49,6 +50,7 @@ class MessageError(EventEnvelope):
         "source_unavailable",
     ]
     retryable: bool
+    meta: ToolCallMeta = Field(default_factory=ToolCallMeta)
 
 
 EVENT_MODELS: dict[str, type[EventEnvelope]] = {

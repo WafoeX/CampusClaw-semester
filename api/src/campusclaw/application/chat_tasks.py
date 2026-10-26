@@ -11,7 +11,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from campusclaw.api.dependencies import Principal
-from campusclaw.api.schemas import CitationSource
+from campusclaw.api.schemas import CitationSource, ToolCallStatus
 from campusclaw.application.chat import ChatResult, ChatService
 from campusclaw.application.conversations import ConversationService
 from campusclaw.application.generation import (
@@ -20,9 +20,11 @@ from campusclaw.application.generation import (
     reauthorize_evidence,
     source_response,
 )
+from campusclaw.application.mcp_execution import McpToolStage
 from campusclaw.application.providers import ProviderFailure
 from campusclaw.config import Settings
 from campusclaw.domain.models import ConversationMessage, User
+from campusclaw.domain.tool_outcomes import ToolText
 from campusclaw.persistence.database import Database
 from campusclaw.persistence.knowledge import KnowledgeRepository
 
@@ -37,6 +39,7 @@ class TurnOutcome:
     completed_at: datetime | None = None
     code: str | None = None
     retryable: bool = True
+    tool_calls: tuple[ToolCallStatus, ...] = ()
 
 
 def _generate(
@@ -46,6 +49,7 @@ def _generate(
     conversation_id: uuid.UUID,
     user_id: uuid.UUID,
     assistant_id: uuid.UUID,
+    tool_results: tuple[ToolText, ...] = (),
 ) -> ChatResult:
     with database.session_factory() as session:
         service = ConversationService(settings)
@@ -64,6 +68,7 @@ def _generate(
                 history=history,
                 revision_id=assistant.applied_agent_revision_id,
                 configuration_updated=assistant.configuration_updated,
+                tool_results=tool_results,
             )
         finally:
             chat.close()
@@ -89,6 +94,11 @@ def _finish(
         )
         if assistant is None:
             raise InvalidGenerationOutput("generation_invalid")
+        calls = tuple(ToolCallStatus.model_validate(entry) for entry in assistant.tool_calls)
+        if assistant.state != "processing":
+            return TurnOutcome(
+                code=assistant.safe_error_code or "generation_failed", tool_calls=calls
+            )
         service = ConversationService(settings)
         if result is not None:
             current_user = session.scalar(
@@ -130,10 +140,14 @@ def _finish(
                 )
                 completed_at = assistant.completed_at
                 session.commit()
-                return TurnOutcome(result, answer, sources, completed_at)
+                return TurnOutcome(result, answer, sources, completed_at, tool_calls=calls)
         service.fail_turn(session, assistant, code=code or "generation_failed")
         session.commit()
-        return TurnOutcome(code=code or "generation_failed", retryable=code != "generation_invalid")
+        return TurnOutcome(
+            code=code or "generation_failed",
+            retryable=code != "generation_invalid",
+            tool_calls=calls,
+        )
 
 
 async def execute_turn(
@@ -146,11 +160,13 @@ async def execute_turn(
 ) -> TurnOutcome:
     result: ChatResult | None = None
     code: str | None = None
+    stage = McpToolStage(database, settings, principal, conversation_id, user_id, assistant_id)
     try:
-        # Cancellation abandons only a read-only worker. Provider calls have their own
-        # finite HTTP timeout; late results can never overwrite the terminal DB row.
-        result = await asyncio.wait_for(
-            asyncio.to_thread(
+        async with asyncio.timeout(settings.SSE_TASK_TIMEOUT_SECONDS):
+            # MCP runs only in this supervisor, before the no-evidence early return.
+            # Its finalized text snapshots are immutable and ephemeral in the worker.
+            tools = await stage.run()
+            result = await asyncio.to_thread(
                 _generate,
                 database,
                 settings,
@@ -158,17 +174,22 @@ async def execute_turn(
                 conversation_id,
                 user_id,
                 assistant_id,
-            ),
-            timeout=settings.SSE_TASK_TIMEOUT_SECONDS,
-        )
+                tools,
+            )
     except TimeoutError:
         code = "generation_timeout"
     except InvalidGenerationOutput:
         code = "generation_invalid"
     except ProviderFailure:
         code = "answer_generation_unavailable"
+    except asyncio.CancelledError:
+        code = "generation_failed"
     except Exception:
         # Never log exception repr/traceback: provider/SQL exceptions can carry inputs.
+        code = "generation_failed"
+    try:
+        stage.interrupt()  # Independent commit; never await or replay abandoned HTTP calls.
+    except Exception:
         code = "generation_failed"
     outcome = await asyncio.to_thread(
         _finish,

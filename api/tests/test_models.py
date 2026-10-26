@@ -51,6 +51,9 @@ def test_complete_model_metadata() -> None:
         "conversations",
         "conversation_messages",
         "message_citations",
+        "mcp_servers",
+        "mcp_discovered_tools",
+        "mcp_tool_calls",
     }
 
 

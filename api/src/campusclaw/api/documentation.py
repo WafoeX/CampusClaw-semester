@@ -34,6 +34,10 @@ answer, never raw provider tokens. Prior citations are not evidence for this tur
 message.completed includes answer length/SHA-256, mode, configuration revision and completion time.
 message.error is a safe post-start terminal failure; the HTTP status remains 200. Disconnect does
 not cancel bounded server work: refresh the conversation for its authoritative terminal state.
+Both terminal events include meta.tool_calls: ordered tool_ref/status/code entries, with
+status ok, denied or error; no tools means an empty list. These match assistant history and
+finalized audits even when generation fails. No arguments, raw tool text or credentials are
+exposed. Tool success does not imply answer success or factual support.
 No automatic replay/resume or automatic request retry is supported."""
 
 
@@ -110,7 +114,9 @@ def install_documentation(app: FastAPI) -> None:
                             }
                         },
                     }
-                if path.startswith(("/api/agents", "/api/skills", "/api/conversations")):
+                if path.startswith(
+                    ("/api/agents", "/api/skills", "/api/conversations", "/api/mcp")
+                ):
                     operation["responses"].pop("422", None)
                 elif "422" in operation["responses"]:
                     operation["responses"]["422"] = {
@@ -159,6 +165,34 @@ def install_documentation(app: FastAPI) -> None:
                 "*/*": {"schema": {"type": "string", "format": "binary"}},
             },
         }
+        for path, methods in document["paths"].items():
+            for method, operation in methods.items():
+                if method not in {"get", "post", "patch", "delete"}:
+                    continue
+                if path.startswith("/api/mcp"):
+                    operation["description"] = (
+                        "Teacher-only, class-shared MCP management. Class scope comes from "
+                        "the Bearer JWT, never client input. Other-class servers return 404. "
+                        "Browsers never supply MCP credentials; the host resolves runtime "
+                        "credentials from deployment-approved origins. Names and URLs are "
+                        "immutable after registration. Connect performs initialize, initialized "
+                        "and tools/list; failed connections return 503 with safe actionable "
+                        "codes and no usable cached tools. Disconnect is idempotent and "
+                        "invalidates future dispatch and stale in-flight results. Lists use "
+                        "bounded cursor pagination where available. Audits contain only safe "
+                        "tool references, outcomes, user/time/turn identifiers, not private "
+                        "conversation content, arguments or raw results."
+                    )
+                if path.startswith("/api/skills") and method in {"post", "patch"}:
+                    operation["description"] = (
+                        "Creator-only immutable skill revision. tools accepts at most 8 unique "
+                        "knowledge_search or tool@server references. Omitted on create defaults "
+                        "to knowledge_search; omitted on update preserves prior bindings. "
+                        "An explicit empty list removes MCP bindings, never mandatory class "
+                        "retrieval. Same-class inaccessible bindings return 404; disconnected, "
+                        "undiscovered or incompatible bindings return 409 without partial "
+                        "revision writes. Changes require agent republication."
+                    )
         stream = document["paths"]["/api/conversations/{conversation_id}/messages"]["post"]
         stream["description"] = _SSE_DESCRIPTION
         stream["responses"]["200"] = {
@@ -236,6 +270,8 @@ def _error_statuses(path: str, method: str) -> set[int]:
     statuses = {401}
     if path.startswith(("/api/agents", "/api/skills", "/api/conversations")):
         statuses |= {400, 403, 404, 409}
+    if path.startswith("/api/mcp"):
+        statuses |= {400, 403, 404, 409, 503}
     if path.endswith("/messages"):
         statuses |= {413, 429, 503}
     if path == "/api/knowledge/query":

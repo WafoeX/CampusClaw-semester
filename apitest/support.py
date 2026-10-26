@@ -48,6 +48,14 @@ SAFE_LABELS = frozenset(
         "stream.citations",
         "stream.terminal",
         "stream.configuration",
+        "stream.tool_calls",
+        "mcp.registration",
+        "mcp.discovery",
+        "mcp.disconnected",
+        "mcp.no_dispatch",
+        "mcp.audit",
+        "mcp.safe_fields",
+        "mcp.failure",
         "safe",
     }
 )

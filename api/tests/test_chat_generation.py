@@ -184,6 +184,7 @@ def test_prompt_keeps_private_text_in_typed_untrusted_data_not_platform_policy(
                 "untrusted_teacher_configuration",
                 "untrusted_persisted_history",
                 "current_question",
+                "untrusted_tool_results",
                 "current_authorized_evidence",
             ]
             assert attack in json.dumps(sections[0])

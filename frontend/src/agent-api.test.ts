@@ -59,7 +59,7 @@ describe("SSE contract parser", () => {
   it("accepts exact refusal and safe terminal error", async () => {
     await expect(parseChatStream(stream(frames(events("根据本班资料无法回答该问题", false))), ids.conversation, vi.fn())).resolves.toBeUndefined();
     const first = events()[0];
-    const error: ChatEvent = { name: "message.error", data: { conversation_id: ids.conversation, user_message_id: ids.user, assistant_message_id: ids.assistant, sequence: 2, code: "generation_timeout", retryable: true } };
+    const error: ChatEvent = { name: "message.error", data: { conversation_id: ids.conversation, user_message_id: ids.user, assistant_message_id: ids.assistant, sequence: 2, code: "generation_timeout", retryable: true, meta: { tool_calls: [] } } };
     const receive = vi.fn();
     await parseChatStream(stream(frames([first, error])), ids.conversation, receive);
     expect(receive).toHaveBeenLastCalledWith(error);
@@ -83,7 +83,7 @@ describe("SSE contract parser", () => {
     if (kind === "duplicate-source") { list.splice(4, 0, structuredClone(list[3])); list[4].data.sequence = 5; list[5].data.sequence = 6; }
     if (kind === "missing-source") { list.splice(3, 1); list[3].data.sequence = 4; }
     if (kind === "bad-refusal") list = events("incorrect refusal", false);
-    if (kind === "error-after-delta") list[2] = { name: "message.error", data: { ...list[2].data, code: "generation_failed", retryable: true } };
+    if (kind === "error-after-delta") list[2] = { name: "message.error", data: { ...list[2].data, code: "generation_failed", retryable: true, meta: { tool_calls: [] } } };
     let raw = frames(list);
     if (kind === "unknown-event") raw = raw.replace("answer.delta", "unsafe.event");
     if (kind === "trailing-data") raw += "data: {}";

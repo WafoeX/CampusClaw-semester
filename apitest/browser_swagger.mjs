@@ -1,6 +1,7 @@
 // Optional real-browser supplement to the HTTP runner. No stored token, HAR, or trace.
 import { chromium } from '../frontend/node_modules/@playwright/test/index.mjs';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
@@ -76,7 +77,46 @@ try {
   assert.equal(auth[0].value, `Bearer ${identity.access_token}`);
   const value = await authorized.json();
   for (const key of ['user_id', 'account', 'role', 'class_id']) assert.equal(value[key], identity[key]);
-  // Logout the UI and reload before capturing; response panels/curl snippets can contain tokens.
+  // All protected requests are executed by Swagger controls, not page/request fetch helpers.
+  async function executeOperation(operationId, method, path, { body, parameters = {} } = {}) {
+    stage = operationId;
+    const block = page.locator(`[id$="-${operationId}"]`);
+    assert.equal(await block.count(), 1);
+    await block.locator('.opblock-summary').click();
+    await block.getByRole('button', { name: 'Try it out' }).click();
+    for (const [name, value] of Object.entries(parameters)) {
+      await block.locator(`tr[data-param-name="${name}"] input`).fill(value);
+    }
+    if (body !== undefined) await block.locator('textarea').fill(JSON.stringify(body));
+    const pending = page.waitForResponse(r => r.url() === origin + path && r.request().method() === method);
+    await block.getByRole('button', { name: 'Execute', exact: true }).click();
+    const result = await pending;
+    const headers = (await result.request().headersArray()).filter(h => h.name.toLowerCase() === 'authorization');
+    assert.equal(headers.length, 1);
+    assert.equal(headers[0].value, `Bearer ${identity.access_token}`);
+    assert.equal(result.ok(), true);
+    const value = await result.json();
+    assert.equal(JSON.stringify(value).includes('apitest-only-mcp-runtime-not-for-deployment'), false);
+    assert.equal((result.request().postData() ?? '').includes(identity.access_token), false);
+    await block.locator('.opblock-summary').click();
+    return value;
+  }
+  const server = await executeOperation('post_api_mcp_servers', 'POST', '/api/mcp/servers', {
+    body: { name: `swagger-${randomUUID()}`, base_url: 'http://mcp-demo:8090' },
+  });
+  assert.equal(server.state, 'disconnected');
+  assert.deepEqual(Object.keys(server).sort(), ['id', 'name', 'base_url', 'state', 'connection_generation', 'safe_error_code', 'tool_count', 'created_at', 'updated_at'].sort());
+  const connected = await executeOperation('post_api_mcp_servers_server_id_connect', 'POST', `/api/mcp/servers/${server.id}/connect`, { parameters: { server_id: server.id }, body: {} });
+  assert.equal(connected.state, 'connected');
+  assert.equal(connected.tool_count, 2);
+  const tools = await executeOperation('get_api_mcp_servers_server_id_tools', 'GET', `/api/mcp/servers/${server.id}/tools`, { parameters: { server_id: server.id } });
+  assert.deepEqual(tools.map(t => t.name).sort(), ['formula_hint', 'unit_convert']);
+  const reference = `formula_hint@${server.name}`;
+  const skill = await executeOperation('post_api_skills', 'POST', '/api/skills', {
+    body: { name: `Swagger guidance ${randomUUID()}`, skill_type: 'solution_guidance', instructions: '先提示，再检查条件。', tools: ['knowledge_search', reference] },
+  });
+  assert.deepEqual(skill.tools, ['knowledge_search', reference]);
+  // Reload clears authorization and all token-bearing response/curl panels before capture.
   stage = 'capture';
   await page.reload();
   await page.locator('.swagger-ui .info').waitFor();
@@ -84,10 +124,13 @@ try {
   assert.equal(errors.length, 0);
   assert.equal(external.length, 0);
   await mkdir('apitest/artifacts', { recursive: true });
-  await page.screenshot({ path: 'apitest/artifacts/task9-swagger.png' });
-  const result = { gateway: true, login_try_out: true, authorized_try_out: true, same_principal: true, bearer_header_count: 1, page_errors: errors.length, external_requests: external.length, loopback_docker_exec_bridge: Boolean(bridge) };
-  await writeFile('apitest/artifacts/task9-browser.json', JSON.stringify(result, null, 2) + '\n');
-  console.log('Swagger browser acceptance passed; one Bearer header, same principal, no external requests.');
+  assert.equal((await page.content()).includes(identity.access_token), false);
+  assert.equal((await page.content()).includes('apitest-only-mcp-runtime-not-for-deployment'), false);
+  await page.locator('[id$="-post_api_mcp_servers"]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'apitest/artifacts/mcp-swagger.png' });
+  const result = { gateway: true, login_try_out: true, authorized_try_out: true, mcp_registration: true, mcp_connect: true, actual_discovery: true, skill_tool_saved: true, runtime_credential_absent: true, same_principal: true, bearer_header_count: 1, page_errors: errors.length, external_requests: external.length, sensitive_panels_cleared_before_capture: true, loopback_docker_exec_bridge: Boolean(bridge) };
+  await writeFile('apitest/artifacts/mcp-browser.json', JSON.stringify(result, null, 2) + '\n');
+  console.log('Swagger browser acceptance passed: real MCP registration/connect/tools/skill; JWT only, no external requests.');
 } catch {
   console.error(`Swagger browser acceptance failed at ${stage} (content redacted).`);
   process.exitCode = 1;

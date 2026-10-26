@@ -1,13 +1,13 @@
 # 隔离 API 验收框架
 
-`cases/` 包含 23 个按 URL/方法独立组织的正式黑盒脚本，覆盖登录、旧知识查询、
-技能/智能体管理、发布、学生会话与创建者审计、SSE 消息和公开文档。
+`cases/` 包含 29 个按 URL/方法独立组织的正式黑盒脚本，覆盖登录、旧知识查询、
+技能/智能体管理、发布、学生会话与创建者审计、SSE 消息、公开文档和六项 MCP 登记/列表/连接/工具/断开/审计操作。
 请求只经过测试网关，持久化断言使用只读观察角色；不导入业务实现或白盒 TestClient。
 **空套件或未匹配的操作选择必须失败，不能把支持层自测当作完整 API 验收通过。**
 
 ## 启动与清理
 
-从仓库根目录运行，Docker Compose v2：
+从仓库根目录运行，Docker Compose v2。独立栈不使用真实模型或演示数据；可在以下 Compose 命令追加 `--env-file /dev/null`，避免自动加载本机 `.env`（仍保留显式导出的 `APITEST_*` 运行参数）：
 
 ```sh
 mkdir -p apitest/reports
@@ -17,7 +17,7 @@ docker compose -f docker-compose.apitest.yml up -d --wait
 # 支持层自测（迁移、索引、权限、真实网关/替身/SSE/DB）
 docker compose -f docker-compose.apitest.yml run --rm --no-deps apitest \
   python -m unittest apitest.tests.stack_checks -v
-# 列出 23 个正式操作
+# 列出 29 个正式操作
 docker compose -f docker-compose.apitest.yml run --rm --no-deps apitest \
   python apitest/run_all.py --list
 # 正式验收入口；任何案例失败则返回 1 并继续收集后续结果
@@ -40,6 +40,12 @@ Swagger 为 `http://127.0.0.1:18088/api/docs`。DB/API/Qdrant/替身不映射宿
 与正常输出相同，但固定延迟 2 秒，让收到 message.started 后的并发冲突验证可重复。
 模型只能由测试服务环境变量 `APITEST_GENERATION_MODEL` 选择，不由用户问题触发。
 
+`mcp-demo` 从同仓 `mcp-server/` 实际构建独立测试镜像，使用仅测试的合成运行时令牌，不复用主部署凭证、镜像标签或卷，不发布 8090。真实闭环为连接/发现 → 技能绑定 → 创建/发布智能体 → 学生有资料问答 → stream/assistant/history/只读 SQL/审计一致；同会话断开后 denied、保存 409，无资料时即使工具 ok 也精确拒答。
+
+失败覆盖有明确层次：`mcp-wrong-token` 仍运行真实 MCP 服务但有意使用不同合成凭证；`mcp-invalid`、`mcp-timeout` 是 provider-stub 的内部网络别名，只在测试部署选择非法发现或超时，不能冒充真实 MCP 协议实现。提示注入、超大结果、迟到/取消竞争等补充在 `api/tests/test_mcp_chat.py` / `test_mcp_execution.py` 使用受控 HTTP，不能替代实际容器闭环。
+
+测试 mcp-demo 额外启用不含正文/头的访问行，支持正对照请求计数：连接及首轮工具调用为 4 次 MCP POST，断开后同会话再问新增为 0。主部署 mcp-demo 仍关闭访问日志；计数观察见 [分层验收记录](../docs/mcp-acceptance.md)。
+
 ## 数据与权限
 
 数据库固定为 `campusclaw_apitest`，迁移/应用使用非超级用户 `apitest_owner`。
@@ -48,7 +54,7 @@ runner 只取得 `apitest_reader` 连接，不获得管理员/owner 密码环境
 它没有写权限、建库/建角色/建表权限，也无权读取 `users.password_hash`。
 客户端仅允许主机 `db`、该数据库名与 reader 角色，拒绝 URL 额外参数。
 SQL 使用 `LiteralString` 与独立参数，每次事务只读；5 秒 statement timeout，
-2 秒 lock timeout，单次最多 1000 行。观察权限仅限测试库，不得复用于正式环境。
+2 秒 lock timeout，单次最多 1000 行。MCP 仅读取登记/工具名称代次/调用审计必要安全列，不授予发现工具原始 description/input_schema 读取或 MCP 表写权限。观察权限仅限测试库，不得复用于正式环境。
 
 四个样本账户 `teacher.alpha`、`student.alpha`、`teacher.beta`、`student.beta`，
 以及同班非创建者 `teacher.alpha.other`、另一学生 `student.alpha.other`，
@@ -78,11 +84,11 @@ OPERATION = Operation("GET", "/health", run)
 ```
 
 上述为最小契约示例。正式脚本各自建立 run-scoped 前置数据，不依赖执行顺序。
-共享 `scenarios.py` 只负责 HTTP 前置数据、根据公开 OpenAPI 验证响应以及只读 SQL 核对，
+共享 `scenarios.py` 与 `mcp_scenarios.py` 只负责 HTTP 前置数据、根据公开 OpenAPI 验证响应以及只读 SQL 核对，
 不把多个操作的验收调度合并到一个脚本。
 `Client.login()` 返回 token 供调用者内存使用；`Client.json()` 校验 JSON 媒体类型。
 `parse_sse()` / `parse_sse_chunks()` 校验 UTF-8、心跳、帧、顺序、连续序号、共同 ID、
-终态唯一性、摘要、引用集合与下载路径；不支持自动续传或自动重发。
+终态唯一性、摘要、引用集合与下载路径；completed/error 必须有严格安全的 `meta.tool_calls`，只含 tool_ref/ok-denied-error/code，拒绝 pending、参数、原始正文、凭证或重复引用；不支持自动续传或自动重发。
 `context.database.rows("SELECT ... WHERE id = %s", (identifier,))` 用于只读一致性断言。
 
 ## 报告与脱敏
@@ -150,7 +156,7 @@ docker compose -f docker-compose.apitest.yml run --rm --no-deps apitest
 ```
 
 错误分支断言仅有 started/error、无 answer.delta、错误码 allowlist、无泄露，以及一条用户消息、
-一条 failed assistant、空正文与空引用；失败模式报告不是完整 23 操作报告。
+一条 failed assistant、空正文与空引用；新增 MCP 分支还验证已完成工具 ok 在生成失败后仍与历史/审计一致。失败模式报告不是完整 29 操作报告。
 `--operation 'METHOD /path'` 精确选择注册路径，不改变 `--cases` 的 URL 根目录。
 
 ## 可选真实 Chromium Swagger 验收
@@ -161,10 +167,10 @@ docker compose -f docker-compose.apitest.yml run --rm --no-deps apitest
 node apitest/browser_swagger.mjs
 ```
 
-它实际点击登录 Try it out、Authorize、身份 Try it out，断言同一 principal、恰好一个
-Bearer 头、无页面/控制台错误、无外部请求。截图前刷新以清除 token/响应/curl 面板，
-仅保存 `artifacts/task9-swagger.png` 和不含内容的布尔结果。HTTP 文档脚本不会假称操作了 UI。
+它实际点击登录 Try it out、Authorize、身份、MCP 登记/connect/tools 及技能工具保存，断言同一 principal、恰好一个用户 JWT Bearer 头，无 MCP 运行时凭证、页面/控制台错误或外部请求。截图前刷新清除 token/响应/curl 面板，仅保存 `artifacts/mcp-swagger.png`、`artifacts/mcp-browser.json` 的安全截图/布尔结果。HTTP 文档脚本不会假称操作了 UI。
 某些 Docker Desktop 版本不为 internal-only 网络绑定宿主端口；脚本在本地连接不可达时，
 核对独立测试项目标签，临时用 loopback TCP → docker exec/nc → 同一个 gateway 转发。
 不会给容器接入外网网络、映射 DB/API 或联系其他服务；结束时关闭转发与浏览器。
 不要把这个环境限制误报成直接宿主端口验收通过。
+
+实际执行命令、43 个 Scenario 覆盖、29/29 完整报告、生成错误补充报告和获准演示部署的不同验证边界，见 [MCP 验收记录](../docs/mcp-acceptance.md)。报告、截图及 JSON 证据均被 Git 忽略，不承诺新克隆自带运行产物；不得用隔离替身的成功宣称真实模型质量通过。

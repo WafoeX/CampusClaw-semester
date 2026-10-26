@@ -11,8 +11,20 @@ class CaseTests(unittest.TestCase):
     def test_all_required_operations_are_discovered(self) -> None:
         root = Path(__file__).parent.parent / "cases"
         operations = discover(root)
-        self.assertEqual(len(operations), 23)
-        self.assertEqual(len({(row.method, row.path) for row in operations}), 23)
+        self.assertEqual(len(operations), 29)
+        registered = {(row.method, row.path) for row in operations}
+        self.assertEqual(len(registered), 29)
+        self.assertTrue(
+            {
+                ("GET", "/api/mcp/servers"),
+                ("POST", "/api/mcp/servers"),
+                ("POST", "/api/mcp/servers/{server_id}/connect"),
+                ("GET", "/api/mcp/servers/{server_id}/tools"),
+                ("POST", "/api/mcp/servers/{server_id}/disconnect"),
+                ("GET", "/api/mcp/audits"),
+            }
+            <= registered
+        )
         self.assertIn(("POST", "/api/auth/login"), {(row.method, row.path) for row in operations})
         for path in root.rglob("*.py"):
             self.assertNotIn("campusclaw.", path.read_text())
